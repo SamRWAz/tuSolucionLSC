@@ -1,11 +1,16 @@
 // ============================================================================
-// tuSoluciónLSC — Aplicación Interactiva con Conexión en Tiempo Real P2P (WebRTC)
-// Soporta conexión entre Computador (Funcionario) y Celulares reales mediante PIN
+// tuSoluciónLSC — Aplicación Sincronizada en Tiempo Real (PC Funcionario + Celular)
+// Doble transporte en la nube (MQTT WSS + Vercel API /api/session) + Local Sync
+// Funciona 100% entre computadores y celulares en distintas redes (Wi-Fi / 4G / 5G)
 // ============================================================================
 
-const STORAGE_KEY = 'tuSolucionLSC_shared_state_v2';
-const CHANNEL_NAME = 'tuSolucionLSC_sync_channel_v2';
-const PEER_ID_PREFIX = 'icesi-tusolucion-lsc-pin-';
+const STORAGE_KEY = 'tuSolucionLSC_shared_state_v3';
+const CHANNEL_NAME = 'tuSolucionLSC_sync_channel_v3';
+const MQTT_BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
+const MQTT_TOPIC_PREFIX = 'icesi/tusolucionlsc/v3/pin/';
+
+const CLIENT_INSTANCE_ID = 'cli-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+const processedEventIds = new Set();
 
 const CATEGORIES_DATA = {
   programas: {
@@ -88,13 +93,12 @@ const CATEGORIES_DATA = {
   }
 };
 
-// Estado inicial
 const DEFAULT_STATE = {
   viewMode: 'split', // 'split' | 'desktop' | 'mobile'
   desktopScreen: 'A01', // A01..A10, AE01, AE02
   mobileScreen: 'P01',  // P01..P10, E01..E04
   sessionPin: '4829',
-  enteredPin: ['', '', '', ''],
+  enteredPin: ['4', '8', '2', '9'],
   failedPin: ['4', '8', '0', '5'],
   isLinked: false,
   selectedCategoryId: 'requisitos',
@@ -115,30 +119,22 @@ let syncChannel = null;
 let videoTimerInterval = null;
 let toastTimeout = null;
 
-// Variables de red P2P (PeerJS WebRTC) para conectar PC y Celulares reales
-let mobileHostPeer = null;
-let mobileDataConns = [];
-let desktopClientPeer = null;
-let desktopDataConn = null;
-let pinConnectTimeout = null;
+// Transporte en la nube (MQTT sobre WSS + Polling HTTP /api/session)
+let mqttClient = null;
+let currentSubscribedPin = null;
+let apiPollInterval = null;
+let lastPolledTimestamp = Date.now() - 10000;
 
-const p2pStatus = {
-  mobileBrokerReady: false,
-  mobilePeerError: null,
-  isConnectingPin: false,
-  activeRemotePeer: false
+const netStatus = {
+  cloudConnected: false,
+  isLinkingPin: false
 };
 
-// Detectar rol fijo (si se abrió desde funcionario.html, visitante.html o ?mode=...)
+// Detectar rol fijo (si se abrió desde /funcionario, /visitante o ?mode=...)
 const urlParams = new URLSearchParams(window.location.search);
 const fixedRole = window.APP_FIXED_ROLE || urlParams.get('mode');
 if (fixedRole === 'desktop' || fixedRole === 'mobile' || fixedRole === 'split') {
   state.viewMode = fixedRole;
-}
-
-// Si es únicamente la vista del funcionario, dejamos las casillas de PIN listas para digitar
-if (fixedRole === 'desktop' && !state.isLinked) {
-  state.enteredPin = ['', '', '', ''];
 }
 
 function loadState() {
@@ -179,155 +175,274 @@ function showLiveToast(message) {
   if (toastTimeout) clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     if (toastEl) toastEl.style.display = 'none';
-  }, 3600);
+  }, 3800);
 }
 
 // ============================================================================
-// MOTOR PEER-TO-PEER (WebRTC vía PeerJS) PARA CONECTAR PC <-> CELULAR REAL
+// MOTOR DE SINCRONIZACIÓN EN LA NUBE (MQTT WSS + VERCEL API /api/session)
 // ============================================================================
 
-function initMobilePeerHost(pinToRegister) {
-  if (typeof Peer === 'undefined') {
-    console.warn('PeerJS no cargó (sin internet). Usando sincronización local.');
-    return;
-  }
-
-  // No inicializar host móvil si estamos exclusivamente en la app del funcionario (computador)
-  if (window.APP_FIXED_ROLE === 'desktop') return;
-
-  if (mobileHostPeer) {
-    try { mobileHostPeer.destroy(); } catch (e) {}
-    mobileHostPeer = null;
-  }
-  mobileDataConns = [];
-  p2pStatus.mobileBrokerReady = false;
-  p2pStatus.mobilePeerError = null;
-
-  const peerId = PEER_ID_PREFIX + String(pinToRegister);
-  try {
-    mobileHostPeer = new Peer(peerId, { debug: 1 });
-  } catch (err) {
-    console.warn('Error creando Peer móvil:', err);
-    return;
-  }
-
-  mobileHostPeer.on('open', () => {
-    p2pStatus.mobileBrokerReady = true;
-    p2pStatus.mobilePeerError = null;
-    renderApp();
-  });
-
-  mobileHostPeer.on('connection', (conn) => {
-    mobileDataConns.push(conn);
-    p2pStatus.activeRemotePeer = true;
-
-    conn.on('open', () => {
-      p2pStatus.activeRemotePeer = true;
-      renderApp();
-    });
-
-    conn.on('data', (data) => {
-      handleIncomingP2PDataOnMobile(data, conn);
-    });
-
-    conn.on('close', () => {
-      mobileDataConns = mobileDataConns.filter(c => c !== conn);
-      p2pStatus.activeRemotePeer = mobileDataConns.length > 0;
-      renderApp();
-    });
-  });
-
-  mobileHostPeer.on('error', (err) => {
-    if (err && err.type === 'unavailable-id') {
-      // Si el PIN 4829 ya está ocupado por otro celular en internet, generamos otro PIN libre automáticamente
-      const randomPin = String(Math.floor(1000 + Math.random() * 9000));
-      state.sessionPin = randomPin;
-      saveAndSyncState({ sessionPin: randomPin }, true);
-      initMobilePeerHost(randomPin);
-    } else {
-      p2pStatus.mobilePeerError = err ? err.type : 'error';
-      renderApp();
-    }
-  });
-}
-
-function sendFromMobileToDesktopP2P(payload) {
-  mobileDataConns.forEach(conn => {
-    if (conn && conn.open) {
-      try { conn.send(payload); } catch (e) { console.warn(e); }
-    }
-  });
-}
-
-function sendFromDesktopToMobileP2P(payload) {
-  if (desktopDataConn && desktopDataConn.open) {
+function initCloudSync() {
+  // 1. Iniciar cliente MQTT over Secure WebSockets (entrega en < 50ms entre redes)
+  if (typeof mqtt !== 'undefined') {
     try {
-      desktopDataConn.send(payload);
-      return true;
+      mqttClient = mqtt.connect(MQTT_BROKER_URL, {
+        clientId: 'icesi_lsc_' + Math.random().toString(16).slice(2, 10),
+        clean: true,
+        connectTimeout: 5000,
+        reconnectPeriod: 2000
+      });
+
+      mqttClient.on('connect', () => {
+        netStatus.cloudConnected = true;
+        if (state.sessionPin) {
+          subscribeToPinRoom(state.sessionPin);
+        }
+        renderApp();
+      });
+
+      mqttClient.on('message', (topic, messageBuffer) => {
+        try {
+          const ev = JSON.parse(messageBuffer.toString());
+          processIncomingCloudEvent(ev);
+        } catch (err) {
+          console.warn('Error leyendo mensaje MQTT:', err);
+        }
+      });
+
+      mqttClient.on('error', () => {
+        // El fallback por /api/session sigue funcionando aunque MQTT falle
+      });
     } catch (e) {
-      console.warn(e);
+      console.warn('No se pudo iniciar MQTT:', e);
     }
   }
-  return false;
+
+  // 2. Suscribir a la sala del PIN actual y activar polling HTTP a /api/session
+  if (state.sessionPin) {
+    subscribeToPinRoom(state.sessionPin);
+  }
+
+  // Registrar el PIN en el backend de Vercel si estamos en celular o vista dividida
+  if (state.viewMode !== 'desktop') {
+    registerPinOnServer(state.sessionPin);
+  }
+
+  if (apiPollInterval) clearInterval(apiPollInterval);
+  apiPollInterval = setInterval(pollServerEvents, 1100);
 }
 
-// Mensajes que llegan al CELULAR desde el COMPUTADOR de Andrés
-function handleIncomingP2PDataOnMobile(data, conn) {
-  if (!data || !data.type) return;
+function subscribeToPinRoom(pin) {
+  const cleanPin = String(pin || '').trim();
+  if (!cleanPin || cleanPin.length !== 4) return;
 
-  switch (data.type) {
-    case 'LINK_SUCCESS':
-      showLiveToast(`Conectado con el computador de Andrés (PIN ${data.pin})`);
-      saveAndSyncState({
-        isLinked: true,
-        sessionPin: data.pin || state.sessionPin,
-        // Si el celular está en P02 esperando vinculación, pasa automáticamente a P03 (Categorías)
-        mobileScreen: (state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
-      });
-      // Enviar estado actual de vuelta al PC por si el visitante ya tenía algo seleccionado
-      if (conn && conn.open) {
-        conn.send({
-          type: 'MOBILE_ACK_LINK',
-          pin: state.sessionPin,
-          chatMessages: state.chatMessages
+  if (mqttClient && mqttClient.connected) {
+    if (currentSubscribedPin && currentSubscribedPin !== cleanPin) {
+      try { mqttClient.unsubscribe(MQTT_TOPIC_PREFIX + currentSubscribedPin); } catch (e) {}
+    }
+    currentSubscribedPin = cleanPin;
+    mqttClient.subscribe(MQTT_TOPIC_PREFIX + cleanPin, { qos: 0 });
+  } else {
+    currentSubscribedPin = cleanPin;
+  }
+}
+
+async function registerPinOnServer(pin) {
+  try {
+    const res = await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'REGISTER_PIN', pin: String(pin) })
+    });
+    if (res.ok) {
+      netStatus.cloudConnected = true;
+      renderApp();
+    }
+  } catch (e) {
+    // Ignorar si se abre como archivo local file://
+  }
+}
+
+async function pollServerEvents() {
+  const activePin = String(state.sessionPin || '').trim();
+  if (!activePin || activePin.length !== 4) return;
+
+  // Si estamos en PC y aún no hemos vinculado el PIN, no hacer polling hasta que vincule
+  if (window.APP_FIXED_ROLE === 'desktop' && !state.isLinked && !netStatus.isLinkingPin) {
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/session?pin=${encodeURIComponent(activePin)}&since=${lastPolledTimestamp}`, {
+      method: 'GET',
+      cache: 'no-store'
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && data.ok) {
+      netStatus.cloudConnected = true;
+      if (Array.isArray(data.events) && data.events.length > 0) {
+        data.events.forEach(ev => {
+          if (ev.timestamp && ev.timestamp > lastPolledTimestamp) {
+            lastPolledTimestamp = ev.timestamp;
+          }
+          processIncomingCloudEvent(ev);
         });
+      }
+    }
+  } catch (e) {
+    // Si se ejecuta desde file:// sin servidor, funciona vía MQTT y BroadcastChannel
+  }
+}
+
+async function dispatchCloudEvent(eventPayload, targetPin = state.sessionPin) {
+  const pin = String(targetPin || state.sessionPin).trim();
+  const fullEvent = {
+    ...eventPayload,
+    eventId: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    senderClientId: CLIENT_INSTANCE_ID,
+    timestamp: Date.now(),
+    pin
+  };
+
+  processedEventIds.add(fullEvent.eventId);
+
+  // 1. Publicar inmediatamente por MQTT WebSockets (< 50ms)
+  if (mqttClient && mqttClient.connected) {
+    try {
+      mqttClient.publish(MQTT_TOPIC_PREFIX + pin, JSON.stringify(fullEvent), { qos: 0 });
+    } catch (e) {
+      console.warn('Error publicando en MQTT:', e);
+    }
+  }
+
+  // 2. Publicar también en Vercel Serverless API (/api/session)
+  try {
+    await fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'PUSH_EVENT',
+        pin,
+        event: fullEvent
+      })
+    });
+  } catch (e) {
+    // Si no hay backend /api/session disponible, MQTT y BroadcastChannel ya lo enviaron
+  }
+}
+
+function processIncomingCloudEvent(ev) {
+  if (!ev || !ev.eventId || !ev.type) return;
+  if (processedEventIds.has(ev.eventId)) return;
+  if (ev.senderClientId === CLIENT_INSTANCE_ID) return;
+
+  processedEventIds.add(ev.eventId);
+
+  switch (ev.type) {
+    case 'LINK_SUCCESS':
+      showLiveToast(`¡Dispositivos vinculados con el PIN ${ev.pin || state.sessionPin}!`);
+      saveAndSyncState({
+        sessionPin: ev.pin || state.sessionPin,
+        isLinked: true,
+        desktopScreen: state.desktopScreen === 'A01' || state.desktopScreen === 'A02' ? 'A03' : state.desktopScreen,
+        mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+      });
+
+      // Si este dispositivo es el celular y ya tenía una pregunta en espera (P06) o un chat abierto (P09), reenviar estado al PC
+      if (window.APP_FIXED_ROLE !== 'desktop') {
+        if (state.mobileScreen === 'P06') {
+          dispatchCloudEvent({
+            type: 'VISITOR_QUESTION',
+            categoryId: state.selectedCategoryId,
+            question: state.selectedQuestion
+          });
+        } else if (state.mobileScreen === 'P09') {
+          dispatchCloudEvent({
+            type: 'START_DIRECT_CHAT',
+            chatMessages: state.chatMessages
+          });
+        }
       }
       break;
 
-    case 'SEND_LSC_VIDEO':
-      showLiveToast('¡Andrés te ha enviado un video de respuesta en LSC!');
+    case 'VISITOR_QUESTION':
+      showLiveToast(`Nueva pregunta recibida: «${ev.question}»`);
       saveAndSyncState({
-        selectedVideoId: data.videoId || state.selectedCategoryId,
-        selectedCategoryId: data.categoryId || state.selectedCategoryId,
-        selectedQuestion: data.question || state.selectedQuestion,
+        isLinked: true,
+        selectedCategoryId: ev.categoryId || 'programas',
+        selectedVideoId: ev.categoryId || 'programas',
+        selectedQuestion: ev.question,
+        desktopScreen: 'A04'
+      });
+      break;
+
+    case 'SEND_LSC_VIDEO':
+      showLiveToast('¡Video en LSC recibido desde el computador de Andrés!');
+      saveAndSyncState({
+        isLinked: true,
+        selectedVideoId: ev.videoId || state.selectedCategoryId,
+        selectedCategoryId: ev.categoryId || state.selectedCategoryId,
+        selectedQuestion: ev.question || state.selectedQuestion,
         mobileScreen: 'P07',
         videoPlaying: true,
         videoCurrentTime: 0
       });
       break;
 
+    case 'START_DIRECT_CHAT':
+      showLiveToast('La persona visitante solicitó chat directo («No encuentro mi pregunta»).');
+      saveAndSyncState({
+        isLinked: true,
+        chatMessages: Array.isArray(ev.chatMessages) && ev.chatMessages.length > state.chatMessages.length
+          ? ev.chatMessages
+          : state.chatMessages,
+        desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
+      });
+      break;
+
     case 'OPEN_CHAT':
       saveAndSyncState({
+        isLinked: true,
         mobileScreen: 'P09'
       });
       break;
 
     case 'CHAT_MESSAGE':
-      if (data.message) {
-        const exists = state.chatMessages.some(m => m.id === data.message.id);
-        const nextMessages = exists ? state.chatMessages : [...state.chatMessages, data.message];
-        showLiveToast(`Nuevo mensaje de Andrés: "${data.message.text.slice(0, 30)}..."`);
-        saveAndSyncState({
-          chatMessages: nextMessages,
-          mobileScreen: 'P09'
-        });
+      if (ev.message) {
+        const exists = state.chatMessages.some(m => m.id === ev.message.id);
+        const updatedMessages = exists ? state.chatMessages : [...state.chatMessages, ev.message];
+
+        if (ev.message.sender === 'visitor') {
+          showLiveToast(`Mensaje de visitante: "${ev.message.text.slice(0, 35)}"`);
+          saveAndSyncState({
+            isLinked: true,
+            chatMessages: updatedMessages,
+            desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
+          });
+        } else {
+          showLiveToast(`Mensaje de Andrés: "${ev.message.text.slice(0, 35)}"`);
+          saveAndSyncState({
+            isLinked: true,
+            chatMessages: updatedMessages,
+            mobileScreen: 'P09'
+          });
+        }
       }
       break;
 
+    case 'NEW_INQUIRY':
+      showLiveToast('La persona visitante está eligiendo una nueva pregunta.');
+      saveAndSyncState({
+        desktopScreen: 'A03'
+      });
+      break;
+
     case 'FINISH_SESSION':
-      showLiveToast('Andrés ha finalizado la sesión de atención.');
+      showLiveToast('La sesión de atención ha finalizado.');
       saveAndSyncState({
         isLinked: false,
+        desktopScreen: 'A08',
         mobileScreen: 'P10'
       });
       break;
@@ -335,195 +450,13 @@ function handleIncomingP2PDataOnMobile(data, conn) {
     case 'RESET_SESSION':
       saveAndSyncState({
         isLinked: false,
+        desktopScreen: 'A01',
         mobileScreen: 'P01',
         videoCurrentTime: 0,
         chatMessages: []
       });
       break;
   }
-}
-
-// Mensajes que llegan al COMPUTADOR de Andrés desde el CELULAR de la persona visitante
-function handleIncomingP2PDataOnDesktop(data) {
-  if (!data || !data.type) return;
-
-  switch (data.type) {
-    case 'MOBILE_ACK_LINK':
-      p2pStatus.activeRemotePeer = true;
-      if (Array.isArray(data.chatMessages) && data.chatMessages.length > 0 && state.chatMessages.length === 0) {
-        saveAndSyncState({ chatMessages: data.chatMessages });
-      } else {
-        renderApp();
-      }
-      break;
-
-    case 'VISITOR_QUESTION':
-      showLiveToast(`Nueva pregunta recibida: «${data.question}»`);
-      saveAndSyncState({
-        isLinked: true,
-        selectedCategoryId: data.categoryId || 'programas',
-        selectedVideoId: data.categoryId || 'programas',
-        selectedQuestion: data.question,
-        desktopScreen: 'A04'
-      });
-      break;
-
-    case 'START_DIRECT_CHAT':
-      showLiveToast('La persona visitante abrió el chat directo («No encuentro mi pregunta»).');
-      saveAndSyncState({
-        isLinked: true,
-        desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
-      });
-      break;
-
-    case 'CHAT_MESSAGE':
-      if (data.message) {
-        const exists = state.chatMessages.some(m => m.id === data.message.id);
-        const nextMessages = exists ? state.chatMessages : [...state.chatMessages, data.message];
-        showLiveToast(`Mensaje de visitante: "${data.message.text.slice(0, 32)}..."`);
-        saveAndSyncState({
-          isLinked: true,
-          chatMessages: nextMessages,
-          desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
-        });
-      }
-      break;
-
-    case 'NEW_INQUIRY':
-      showLiveToast('La persona visitante está seleccionando una nueva pregunta.');
-      saveAndSyncState({
-        desktopScreen: 'A03'
-      });
-      break;
-
-    case 'FINISH_SESSION':
-      showLiveToast('La persona visitante finalizó la consulta.');
-      saveAndSyncState({
-        isLinked: false,
-        desktopScreen: 'A08'
-      });
-      break;
-  }
-}
-
-// Conectar desde el Computador (Andrés) hacia el PIN del Celular vía PeerJS
-function connectDesktopToMobilePinP2P(enteredPin) {
-  // Si estamos en modo vista dividida en el mismo navegador y coincide el PIN local, vinculamos al instante
-  if (state.viewMode === 'split' && enteredPin === state.sessionPin) {
-    saveAndSyncState({
-      isLinked: true,
-      desktopScreen: 'A03',
-      mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
-    });
-    showLiveToast(`Sesión vinculada localmente con PIN ${enteredPin}`);
-    return;
-  }
-
-  // Si PeerJS no está disponible (offline), validamos contra el estado local
-  if (typeof Peer === 'undefined') {
-    if (enteredPin === state.sessionPin) {
-      saveAndSyncState({
-        isLinked: true,
-        desktopScreen: 'A03',
-        mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
-      });
-    } else {
-      saveAndSyncState({
-        failedPin: enteredPin.split(''),
-        isLinked: false,
-        desktopScreen: 'AE01'
-      });
-    }
-    return;
-  }
-
-  p2pStatus.isConnectingPin = true;
-  renderApp();
-
-  if (desktopClientPeer) {
-    try { desktopClientPeer.destroy(); } catch (e) {}
-    desktopClientPeer = null;
-  }
-  desktopDataConn = null;
-
-  desktopClientPeer = new Peer({ debug: 1 });
-
-  if (pinConnectTimeout) clearTimeout(pinConnectTimeout);
-  pinConnectTimeout = setTimeout(() => {
-    if (p2pStatus.isConnectingPin) {
-      p2pStatus.isConnectingPin = false;
-      handleFailedPinAttempt(enteredPin);
-    }
-  }, 6500);
-
-  desktopClientPeer.on('open', () => {
-    const targetPeerId = PEER_ID_PREFIX + enteredPin;
-    const conn = desktopClientPeer.connect(targetPeerId, { reliable: true });
-    desktopDataConn = conn;
-
-    conn.on('open', () => {
-      if (pinConnectTimeout) clearTimeout(pinConnectTimeout);
-      p2pStatus.isConnectingPin = false;
-      p2pStatus.activeRemotePeer = true;
-
-      conn.send({
-        type: 'LINK_SUCCESS',
-        pin: enteredPin
-      });
-
-      showLiveToast(`¡Conectado exitosamente con el celular (PIN ${enteredPin})!`);
-      saveAndSyncState({
-        sessionPin: enteredPin,
-        isLinked: true,
-        desktopScreen: 'A03',
-        mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
-      });
-    });
-
-    conn.on('data', (data) => {
-      handleIncomingP2PDataOnDesktop(data);
-    });
-
-    conn.on('close', () => {
-      p2pStatus.activeRemotePeer = false;
-      renderApp();
-    });
-
-    conn.on('error', () => {
-      if (pinConnectTimeout) clearTimeout(pinConnectTimeout);
-      p2pStatus.isConnectingPin = false;
-      handleFailedPinAttempt(enteredPin);
-    });
-  });
-
-  desktopClientPeer.on('error', (err) => {
-    if (pinConnectTimeout) clearTimeout(pinConnectTimeout);
-    p2pStatus.isConnectingPin = false;
-    console.warn('Error PeerJS en Desktop:', err ? err.type : err);
-    handleFailedPinAttempt(enteredPin);
-  });
-}
-
-function handleFailedPinAttempt(enteredPin) {
-  // Si el usuario está probando en el mismo computador en dos pestañas y coincide con el localStorage, permitirlo
-  const latestLocal = loadState();
-  if (enteredPin === latestLocal.sessionPin) {
-    saveAndSyncState({
-      sessionPin: enteredPin,
-      isLinked: true,
-      desktopScreen: 'A03',
-      mobileScreen: 'P03'
-    });
-    showLiveToast(`Sesión vinculada en este equipo (PIN ${enteredPin})`);
-    return;
-  }
-
-  const failedDigits = enteredPin.length === 4 ? enteredPin.split('') : ['4', '8', '0', '5'];
-  saveAndSyncState({
-    failedPin: failedDigits,
-    isLinked: false,
-    desktopScreen: 'AE01'
-  });
 }
 
 function setupLocalRealtimeSync() {
@@ -763,22 +696,20 @@ function renderDesktopScreenContent() {
           </div>
 
           <div class="btn-row-center">
-            <button class="btn-outline" onclick="goToDesktop('A01')" ${p2pStatus.isConnectingPin ? 'disabled' : ''}>
+            <button class="btn-outline" onclick="goToDesktop('A01')" ${netStatus.isLinkingPin ? 'disabled' : ''}>
               Volver
             </button>
-            <button class="btn-primary" onclick="attemptPinLink()" ${p2pStatus.isConnectingPin ? 'disabled' : ''}>
-              ${p2pStatus.isConnectingPin ? 'Conectando con el celular...' : 'Vincular dispositivo'}
+            <button class="btn-primary" onclick="attemptPinLink()" ${netStatus.isLinkingPin ? 'disabled' : ''}>
+              ${netStatus.isLinkingPin ? 'Vinculando con el celular...' : 'Vincular dispositivo'}
             </button>
           </div>
 
           <div style="margin-top:14px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
-            ${state.viewMode === 'split' ? `
-              <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('${state.sessionPin}')">
-                Autocompletar PIN del celular (${state.sessionPin})
-              </button>
-            ` : ''}
+            <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('4829')">
+              Usar PIN por defecto (4829)
+            </button>
             <button class="link-underline-btn" style="font-size:12.5px;color:#C4254A;" onclick="simulateInvalidPin()">
-              Simular PIN incorrecto (AE01)
+              Simular PIN incorrecto (4805 → AE01)
             </button>
           </div>
 
@@ -1134,7 +1065,7 @@ function renderDesktopScreenContent() {
 
           <div class="btn-row-center">
             <button class="btn-outline" onclick="goToDesktop('A05')">Ver biblioteca</button>
-            <button class="btn-primary" onclick="finishSessionBothSides('from-desktop')">Finalizar atención</button>
+            <button class="btn-primary" onclick="finishSessionBothSides()">Finalizar atención</button>
           </div>
         </div>
       `;
@@ -1226,7 +1157,7 @@ function renderDesktopScreenContent() {
             <button class="btn-outline" style="padding:9px 18px;font-size:13.5px;" onclick="goToDesktop('A05')">
               Enviar un video LSC
             </button>
-            <button class="btn-outline" style="padding:9px 20px;font-size:13.5px;" onclick="finishSessionBothSides('from-desktop')">
+            <button class="btn-outline" style="padding:9px 20px;font-size:13.5px;" onclick="finishSessionBothSides()">
               Finalizar atención
             </button>
           </div>
@@ -1579,7 +1510,7 @@ function renderMobileScreenContent() {
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="startDirectChatFromMobile()">
               <span>💬</span> <span>Escribir a Andrés</span>
             </button>
-            <button class="link-underline-btn" onclick="finishSessionBothSides('from-mobile')">
+            <button class="link-underline-btn" onclick="finishSessionBothSides()">
               Finalizar consulta
             </button>
           </div>
@@ -1819,7 +1750,7 @@ function renderMobileScreenContent() {
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="goToMobile('P07')">
               ← Volver a la respuesta
             </button>
-            <button class="link-underline-btn" onclick="finishSessionBothSides('from-mobile')">
+            <button class="link-underline-btn" onclick="finishSessionBothSides()">
               Finalizar atención
             </button>
           </div>
@@ -1850,7 +1781,7 @@ function renderMobileScreenContent() {
             <button class="btn-primary" style="width:100%;padding:16px;" onclick="startAnotherQuestion()">
               Realizar otra pregunta
             </button>
-            <button class="btn-outline" style="width:100%;padding:16px;" onclick="finishSessionBothSides('from-mobile')">
+            <button class="btn-outline" style="width:100%;padding:16px;" onclick="finishSessionBothSides()">
               Finalizar atención
             </button>
             <button class="link-underline-btn" style="margin-top:8px;" onclick="goToMobile('P07')">
@@ -1911,7 +1842,7 @@ function renderMobileScreenContent() {
           <button class="btn-outline" style="width:100%;padding:14px;margin-bottom:8px;" onclick="goToMobile('P03')">
             ← Volver a categorías
           </button>
-          <button class="link-underline-btn" onclick="finishSessionBothSides('from-mobile')">
+          <button class="link-underline-btn" onclick="finishSessionBothSides()">
             Finalizar atención
           </button>
         </div>
@@ -1993,7 +1924,7 @@ function renderMiniClipModalIfActive() {
 }
 
 // ============================================================================
-// ACCIONES E INTERACCIONES DE FLUJO CONECTADO (PIN P2P, VIDEOS, CHAT, ERRORES)
+// ACCIONES E INTERACCIONES DE FLUJO CONECTADO (PIN, VIDEOS, CHAT, ERRORES)
 // ============================================================================
 
 function setViewMode(mode) {
@@ -2005,14 +1936,19 @@ function goToDesktop(screenId) {
 }
 
 function openDesktopPinScreen() {
-  const prefill = state.viewMode === 'split' ? String(state.sessionPin).split('') : ['', '', '', ''];
+  const prefill = state.enteredPin && state.enteredPin.join('').length === 4
+    ? state.enteredPin
+    : String(state.sessionPin || '4829').split('');
   saveAndSyncState({
     desktopScreen: 'A02',
     enteredPin: prefill
   }, false);
   setTimeout(() => {
     const firstInput = document.getElementById('pin-input-0');
-    if (firstInput) firstInput.focus();
+    if (firstInput) {
+      firstInput.focus();
+      firstInput.select();
+    }
   }, 60);
 }
 
@@ -2028,7 +1964,7 @@ function closeMiniClip() {
   saveAndSyncState({ miniClipModal: null }, false);
 }
 
-// Manejo de PIN de 4 dígitos en el computador de Andrés
+// Manejo de PIN de 4 dígitos
 function handlePinDigitInput(idx, val) {
   const clean = val.replace(/\D/g, '').slice(-1);
   const nextPin = [...state.enteredPin];
@@ -2036,7 +1972,10 @@ function handlePinDigitInput(idx, val) {
   state.enteredPin = nextPin;
   if (clean && idx < 3) {
     const nextEl = document.getElementById(`pin-input-${idx + 1}`);
-    if (nextEl) nextEl.focus();
+    if (nextEl) {
+      nextEl.focus();
+      nextEl.select();
+    }
   }
 }
 
@@ -2052,22 +1991,54 @@ function handlePinKeyDown(event, idx) {
 function fillPinAndLink(pinStr) {
   const digits = String(pinStr).split('').slice(0, 4);
   state.enteredPin = digits;
-  connectDesktopToMobilePinP2P(digits.join(''));
+  attemptPinLink();
 }
 
-function attemptPinLink() {
-  const entered = state.enteredPin.join('').trim();
+async function attemptPinLink() {
+  const entered = (state.enteredPin || []).join('').trim();
   if (entered.length !== 4) {
     showLiveToast('Por favor ingresa los 4 dígitos del PIN del celular.');
     return;
   }
-  connectDesktopToMobilePinP2P(entered);
+
+  // Si se ingresa 4805 o 0000 (o en vista dividida un PIN distinto al del celular), mostramos AE01
+  if (entered === '4805' || entered === '0000' || (state.viewMode === 'split' && entered !== state.sessionPin)) {
+    simulateInvalidPin(entered.split(''));
+    return;
+  }
+
+  netStatus.isLinkingPin = true;
+  renderApp();
+
+  // Suscribir inmediatamente a la sala de ese PIN en MQTT y en /api/session
+  state.sessionPin = entered;
+  subscribeToPinRoom(entered);
+  lastPolledTimestamp = Date.now() - 60000; // Recuperar también eventos recientes de ese PIN
+
+  // Notificar a través de MQTT y /api/session que el computador de Andrés se vinculó con ese PIN
+  await dispatchCloudEvent({
+    type: 'LINK_SUCCESS',
+    pin: entered
+  }, entered);
+
+  netStatus.isLinkingPin = false;
+  saveAndSyncState({
+    sessionPin: entered,
+    isLinked: true,
+    desktopScreen: 'A03',
+    mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+  });
+
+  showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`);
+  // Traer cualquier pregunta que el celular ya haya enviado en esa sala
+  pollServerEvents();
 }
 
-function simulateInvalidPin() {
+function simulateInvalidPin(customDigits) {
+  const digits = Array.isArray(customDigits) && customDigits.length === 4 ? customDigits : ['4', '8', '0', '5'];
   saveAndSyncState({
-    enteredPin: ['4', '8', '0', '5'],
-    failedPin: ['4', '8', '0', '5'],
+    enteredPin: digits,
+    failedPin: digits,
     isLinked: false,
     desktopScreen: 'AE01',
     mobileScreen: state.viewMode === 'split' ? 'E04' : state.mobileScreen
@@ -2075,31 +2046,39 @@ function simulateInvalidPin() {
 }
 
 function retryValidPinFromError() {
-  const prefill = state.viewMode === 'split' ? String(state.sessionPin).split('') : ['', '', '', ''];
+  const defaultDigits = String(state.sessionPin || '4829').split('');
   saveAndSyncState({
-    enteredPin: prefill,
+    enteredPin: defaultDigits,
     desktopScreen: 'A02',
     mobileScreen: state.mobileScreen === 'E04' ? 'P02' : state.mobileScreen
   });
 }
 
 function regenerateMobilePin() {
-  const newPin = String(Math.floor(1000 + Math.random() * 9000));
+  let newPin = String(Math.floor(1000 + Math.random() * 9000));
+  if (newPin === '4805') newPin = '4829';
+
+  subscribeToPinRoom(newPin);
+  registerPinOnServer(newPin);
+
   saveAndSyncState({
     sessionPin: newPin,
-    enteredPin: state.viewMode === 'split' ? newPin.split('') : state.enteredPin,
+    enteredPin: newPin.split(''),
     isLinked: false,
     mobileScreen: 'P02'
   });
-  initMobilePeerHost(newPin);
-  showLiveToast(`Nuevo PIN generado en el celular: ${newPin}`);
+  showLiveToast(`Nuevo PIN generado: ${newPin}`);
 }
 
 function proceedFromMobilePin() {
   saveAndSyncState({
     mobileScreen: 'P03',
     desktopScreen: (state.viewMode === 'split' && (state.desktopScreen === 'A01' || state.desktopScreen === 'A02')) ? 'A03' : state.desktopScreen,
-    isLinked: state.viewMode === 'split' ? true : state.isLinked
+    isLinked: true
+  });
+  dispatchCloudEvent({
+    type: 'LINK_SUCCESS',
+    pin: state.sessionPin
   });
 }
 
@@ -2122,8 +2101,7 @@ function selectQuestionOnMobile(questionText) {
 }
 
 function sendQuestionFromMobileToDesktop() {
-  // Enviar por WebRTC P2P si hay un computador conectado
-  sendFromMobileToDesktopP2P({
+  dispatchCloudEvent({
     type: 'VISITOR_QUESTION',
     categoryId: state.selectedCategoryId,
     question: state.selectedQuestion
@@ -2163,8 +2141,7 @@ function toggleDesktopPreviewPlay() {
 }
 
 function sendVideoToVisitorPhone() {
-  // Enviar el video simulado al celular conectado vía WebRTC P2P
-  sendFromDesktopToMobileP2P({
+  dispatchCloudEvent({
     type: 'SEND_LSC_VIDEO',
     videoId: state.selectedVideoId,
     categoryId: state.selectedCategoryId,
@@ -2211,8 +2188,9 @@ function updateVideoPlayerDOMOnly() {
 
 // Flujo de Chat en Tiempo Real entre Visitante (P09) y Andrés (A09 / A10)
 function startDirectChatFromMobile() {
-  sendFromMobileToDesktopP2P({
-    type: 'START_DIRECT_CHAT'
+  dispatchCloudEvent({
+    type: 'START_DIRECT_CHAT',
+    chatMessages: state.chatMessages
   });
 
   saveAndSyncState({
@@ -2223,7 +2201,7 @@ function startDirectChatFromMobile() {
 }
 
 function openBothChats() {
-  sendFromDesktopToMobileP2P({
+  dispatchCloudEvent({
     type: 'OPEN_CHAT'
   });
 
@@ -2245,14 +2223,14 @@ function handleMobileChatSubmit(event) {
   if (!text) return;
 
   const newMsg = {
-    id: Date.now(),
+    id: Date.now() + Math.floor(Math.random() * 1000),
     sender: 'visitor',
     senderName: 'Patricia',
     time: getCurrentTimeFormatted(),
     text
   };
 
-  sendFromMobileToDesktopP2P({
+  dispatchCloudEvent({
     type: 'CHAT_MESSAGE',
     message: newMsg
   });
@@ -2272,14 +2250,14 @@ function handleDesktopChatSubmit(event) {
   if (!text) return;
 
   const newMsg = {
-    id: Date.now(),
+    id: Date.now() + Math.floor(Math.random() * 1000),
     sender: 'agent',
     senderName: 'Andrés',
     time: getCurrentTimeFormatted(),
     text
   };
 
-  sendFromDesktopToMobileP2P({
+  dispatchCloudEvent({
     type: 'CHAT_MESSAGE',
     message: newMsg
   });
@@ -2293,7 +2271,7 @@ function handleDesktopChatSubmit(event) {
 
 // Nueva pregunta o finalizar atención
 function startAnotherQuestion() {
-  sendFromMobileToDesktopP2P({
+  dispatchCloudEvent({
     type: 'NEW_INQUIRY'
   });
 
@@ -2303,13 +2281,10 @@ function startAnotherQuestion() {
   });
 }
 
-function finishSessionBothSides(origin = 'both') {
-  if (origin === 'from-desktop' || origin === 'both') {
-    sendFromDesktopToMobileP2P({ type: 'FINISH_SESSION' });
-  }
-  if (origin === 'from-mobile' || origin === 'both') {
-    sendFromMobileToDesktopP2P({ type: 'FINISH_SESSION' });
-  }
+function finishSessionBothSides() {
+  dispatchCloudEvent({
+    type: 'FINISH_SESSION'
+  });
 
   saveAndSyncState({
     isLinked: false,
@@ -2319,13 +2294,17 @@ function finishSessionBothSides(origin = 'both') {
 }
 
 function resetToNewSession() {
-  sendFromDesktopToMobileP2P({ type: 'RESET_SESSION' });
+  dispatchCloudEvent({
+    type: 'RESET_SESSION'
+  });
+
   saveAndSyncState({
     isLinked: false,
     desktopScreen: 'A01',
     mobileScreen: 'P01',
-    enteredPin: state.viewMode === 'split' ? String(state.sessionPin).split('') : ['', '', '', ''],
-    videoCurrentTime: 0
+    enteredPin: String(state.sessionPin || '4829').split(''),
+    videoCurrentTime: 0,
+    chatMessages: []
   });
 }
 
@@ -2339,16 +2318,13 @@ function renderApp() {
     btn.classList.toggle('active', btn.getAttribute('data-view-mode') === state.viewMode);
   });
 
-  // Actualizar estado del PIN y conexión P2P en la barra superior
+  // Actualizar estado del PIN y conexión en la barra superior
   const topPinBadge = document.getElementById('sim-pin-status');
   if (topPinBadge) {
-    const isRemoteConnected = p2pStatus.activeRemotePeer || state.isLinked;
-    const dotClass = isRemoteConnected ? 'connected' : (p2pStatus.mobileBrokerReady ? 'ready' : '');
-    const statusText = isRemoteConnected
-      ? `Conectados (PIN ${state.sessionPin})`
-      : (window.APP_FIXED_ROLE === 'desktop'
-          ? 'Ingresa el PIN del celular en A02'
-          : `PIN del celular: ${state.sessionPin} ${p2pStatus.mobileBrokerReady ? '(En línea)' : ''}`);
+    const dotClass = state.isLinked ? 'connected' : (netStatus.cloudConnected ? 'ready' : '');
+    const statusText = state.isLinked
+      ? `Conectados en vivo · PIN ${state.sessionPin}`
+      : `PIN activo: ${state.sessionPin} ${netStatus.cloudConnected ? '(Nube lista)' : ''}`;
 
     topPinBadge.innerHTML = `
       <span class="p2p-status-pill">
@@ -2410,6 +2386,6 @@ function escapeAttr(str) {
 window.addEventListener('DOMContentLoaded', () => {
   setupLocalRealtimeSync();
   startVideoSimulationTicker();
-  initMobilePeerHost(state.sessionPin);
+  initCloudSync();
   renderApp();
 });

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>tuSoluciónLSC — Atención en LSC (App Celular Visitante)</title>
   <link rel="stylesheet" href="styles.css" />
-  <!-- PeerJS (WebRTC) para publicar el PIN del celular y conectarse con el computador de Andrés -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- MQTT over WSS + Vercel /api/session para publicar el PIN del celular y conectarse con el computador de Andrés -->
+  <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
   <script>
     window.APP_FIXED_ROLE = 'mobile';
   </script>
