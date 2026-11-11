@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>tuSoluciónLSC — Atención en LSC (App Celular Visitante)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- PeerJS (WebRTC) para publicar el PIN del celular y conectarse con el computador de Andrés -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    window.APP_FIXED_ROLE = 'mobile';
+  </script>
+</head>
+<body class="role-mobile-only">
+
+  <!-- Barra de estado discreta para la vista del celular -->
+  <header class="sim-topbar">
+    <div class="sim-topbar-left">
+      <span class="sim-badge">App Visitante · Celular</span>
+      <div class="sim-status-pin" id="sim-pin-status"></div>
+    </div>
+
+    <div class="sim-topbar-right">
+      <select
+        id="mobile-screen-select"
+        class="sim-Grouping-select"
+        title="Saltar a pantalla de Celular"
+        onchange="goToMobile(this.value)"
+      >
+        <optgroup label="Flujo Principal (Celular)">
+          <option value="P01">P01 · Bienvenida LSC</option>
+          <option value="P02">P02 · PIN de la sesión</option>
+          <option value="P03">P03 · Selección de categoría</option>
+          <option value="P04">P04 · Selección de pregunta</option>
+          <option value="P05">P05 · Confirmación de consulta</option>
+          <option value="P06">P06 · Consulta en espera</option>
+          <option value="P07">P07 · Reproducción video LSC</option>
+          <option value="P08">P08 · Nueva consulta o finalizar</option>
+          <option value="P09">P09 · Chat con Andrés</option>
+          <option value="P10">P10 · Atención finalizada</option>
+        </optgroup>
+        <optgroup label="Estados de Error">
+          <option value="E01">E01 · Error al enviar pregunta</option>
+          <option value="E02">E02 · Pregunta no disponible</option>
+          <option value="E03">E03 · El video no carga</option>
+          <option value="E04">E04 · PIN no válido o expirado</option>
+        </optgroup>
+      </select>
+
+      <button class="sim-action-btn" onclick=" regenerateMobilePin()" title="Generar un nuevo PIN">
+        ↻ Nuevo PIN
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace-container mode-mobile" id="workspace-container">
+    <aside class="mobile-pane-wrapper" id="mobile-pane" aria-label="Celular Persona Visitante"></aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
+

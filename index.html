@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tuSoluciónLSC — Atención Presencial Accesible (Funcionario + Visitante)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- PeerJS (WebRTC) para conexión en tiempo real por PIN entre PC y Celulares -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+  <!-- Barra superior de control y sincronización entre las dos vistas -->
+  <header class="sim-topbar">
+    <div class="sim-topbar-left">
+      <span class="sim-badge">tuSoluciónLSC · P2P Tiempo Real</span>
+      <div class="sim-status-pin" id="sim-pin-status"></div>
+    </div>
+
+    <div class="sim-mode-tabs">
+      <button class="sim-mode-btn active" data-view-mode="split" onclick="setViewMode('split')">
+        Vista Dividida (PC + Celular)
+      </button>
+      <button class="sim-mode-btn" data-view-mode="desktop" onclick="setViewMode('desktop')">
+        Vista Funcionario (PC)
+      </button>
+      <button class="sim-mode-btn" data-view-mode="mobile" onclick="setViewMode('mobile')">
+        Vista Usuario (Celular)
+      </button>
+    </div>
+
+    <div class="sim-topbar-right">
+      <a href="funcionario.html" target="_blank" class="sim-action-btn" style="text-decoration:none;">
+        💻 Abrir App Funcionario
+      </a>
+      <a href="visitante.html" target="_blank" class="sim-action-btn" style="text-decoration:none;">
+        📱 Abrir App Celular
+      </a>
+
+      <!-- Selector rápido de las 12 pantallas del Funcionario (Computador) -->
+      <select
+        id="desktop-screen-select"
+        class="sim-Grouping-select"
+        title="Saltar a pantalla de Computador (Funcionario)"
+        onchange="goToDesktop(this.value)"
+      >
+        <optgroup label="Computador · Flujo Principal">
+          <option value="A01">PC: A01 · Bienvenida Andrés</option>
+          <option value="A02">PC: A02 · Ingreso del PIN</option>
+          <option value="A03">PC: A03 · Esperando consulta</option>
+          <option value="A04">PC: A04 · Nueva pregunta recibida</option>
+          <option value="A05">PC: A05 · Biblioteca de videos LSC</option>
+          <option value="A06">PC: A06 · Vista previa del video</option>
+          <option value="A07">PC: A07 · Video enviado correctamente</option>
+          <option value="A08">PC: A08 · Atención finalizada</option>
+          <option value="A09">PC: A09 · Solicitud de chat directo</option>
+          <option value="A10">PC: A10 · Chat con la visitante</option>
+        </optgroup>
+        <optgroup label="Computador · Estados de Error">
+          <option value="AE01">PC: AE01 · Error PIN no válido</option>
+          <option value="AE02">PC: AE02 · Error al enviar video</option>
+        </optgroup>
+      </select>
+
+      <!-- Selector rápido de las 14 pantallas del Usuario (Celular) -->
+      <select
+        id="mobile-screen-select"
+        class="sim-Grouping-select"
+        title="Saltar a pantalla de Celular (Visitante)"
+        onchange="goToMobile(this.value)"
+      >
+        <optgroup label="Celular · Flujo Principal">
+          <option value="P01">Celular: P01 · Bienvenida LSC</option>
+          <option value="P02">Celular: P02 · PIN de la sesión</option>
+          <option value="P03">Celular: P03 · Selección de categoría</option>
+          <option value="P04">Celular: P04 · Selección de pregunta</option>
+          <option value="P05">Celular: P05 · Confirmación de consulta</option>
+          <option value="P06">Celular: P06 · Consulta en espera</option>
+          <option value="P07">Celular: P07 · Reproducción video LSC</option>
+          <option value="P08">Celular: P08 · Nueva consulta o finalizar</option>
+          <option value="P09">Celular: P09 · Chat con Andrés</option>
+          <option value="P10">Celular: P10 · Atención finalizada</option>
+        </optgroup>
+        <optgroup label="Celular · Estados de Error">
+          <option value="E01">Celular: E01 · Error al enviar pregunta</option>
+          <option value="E02">Celular: E02 · Pregunta no disponible</option>
+          <option value="E03">Celular: E03 · El video no carga</option>
+          <option value="E04">Celular: E04 · PIN no válido o expirado</option>
+        </optgroup>
+      </select>
+
+      <button class="sim-action-btn" onclick="resetToNewSession()" title="Reiniciar flujo desde A01 y P01">
+        ↻ Reiniciar
+      </button>
+    </div>
+  </header>
+
+  <!-- Área de trabajo con ambas vistas sincronizadas -->
+  <main class="workspace-container" id="workspace-container">
+    <!-- Vista Funcionario (Computador — Panel de Andrés) -->
+    <section class="desktop-pane-wrapper" id="desktop-pane" aria-label="Vista Computador Funcionario"></section>
+
+    <!-- Vista Usuario/Visitante (Celular) -->
+    <aside class="mobile-pane-wrapper" id="mobile-pane" aria-label="Vista Celular Visitante"></aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

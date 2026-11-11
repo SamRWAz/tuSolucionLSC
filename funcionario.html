@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tuSoluciónLSC — Panel de Andrés (App Funcionario PC)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- PeerJS (WebRTC) para conectar con el celular de la persona visitante mediante PIN -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    window.APP_FIXED_ROLE = 'desktop';
+  </script>
+</head>
+<body class="role-desktop-only">
+
+  <!-- Barra de estado discreta para la vista del funcionario -->
+  <header class="sim-topbar">
+    <div class="sim-topbar-left">
+      <span class="sim-badge">App Funcionario · Computador</span>
+      <div class="sim-status-pin" id="sim-pin-status"></div>
+    </div>
+
+    <div class="sim-topbar-right">
+      <select
+        id="desktop-screen-select"
+        class="sim-Grouping-select"
+        title="Saltar a pantalla de Computador"
+        onchange="goToDesktop(this.value)"
+      >
+        <optgroup label="Flujo Principal (Computador)">
+          <option value="A01">A01 · Bienvenida Andrés</option>
+          <option value="A02">A02 · Ingreso del PIN</option>
+          <option value="A03">A03 · Esperando consulta</option>
+          <option value="A04">A04 · Nueva pregunta recibida</option>
+          <option value="A05">A05 · Biblioteca de videos LSC</option>
+          <option value="A06">A06 · Vista previa del video</option>
+          <option value="A07">A07 · Video enviado correctamente</option>
+          <option value="A08">A08 · Atención finalizada</option>
+          <option value="A09">A09 · Solicitud de chat directo</option>
+          <option value="A10">A10 · Chat con la visitante</option>
+        </optgroup>
+        <optgroup label="Estados de Error">
+          <option value="AE01">AE01 · Error PIN no válido</option>
+          <option value="AE02">AE02 · Error al enviar video</option>
+        </optgroup>
+      </select>
+
+      <button class="sim-action-btn" onclick="resetToNewSession()">
+        ↻ Reiniciar sesión
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace-container mode-desktop" id="workspace-container">
+    <section class="desktop-pane-wrapper" id="desktop-pane" aria-label="Panel de Andrés"></section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
