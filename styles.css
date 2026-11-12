@@ -1485,8 +1485,8 @@ button, input, textarea {
 /* Toast flotante de confirmación en tiempo real */
 .live-toast {
   position: fixed;
-  bottom: 22px;
-  right: 22px;
+  top: 20px;
+  right: 20px;
   background: var(--navy-darker);
   color: var(--white);
   border: 1.5px solid var(--teal-primary);
@@ -1495,16 +1495,25 @@ button, input, textarea {
   font-size: 13.5px;
   font-weight: 700;
   box-shadow: 0 10px 30px rgba(24, 20, 64, 0.28);
-  z-index: 999;
+  z-index: 1200;
   display: flex;
   align-items: center;
   gap: 10px;
   animation: toastSlideIn 0.25s ease-out;
-  max-width: 390px;
+  max-width: min(390px, calc(100vw - 32px));
+}
+
+@media (max-width: 600px) {
+  .live-toast {
+    top: 14px;
+    right: 14px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+  }
 }
 
 @keyframes toastSlideIn {
-  from { transform: translateY(16px); opacity: 0; }
+  from { transform: translateY(-16px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 
