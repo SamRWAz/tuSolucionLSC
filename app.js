@@ -1,13 +1,15 @@
 // ============================================================================
 // tuSoluciónLSC — Aplicación Sincronizada en Tiempo Real (PC Funcionario + Celular)
-// Doble transporte en la nube (MQTT WSS + Vercel API /api/session) + Local Sync
-// Funciona 100% entre computadores y celulares en distintas redes (Wi-Fi / 4G / 5G)
+// Flujo robusto:
+// 1. Al hacer otra pregunta: permite elegir entre la misma categoría (P04) o todas las categorías (P03), sin devolver al inicio.
+// 2. Confirmación explícita antes de entrar al chat con Andrés ("No encuentro mi pregunta").
+// 3. Alertas y banners de estado en vivo en ambas pantallas (Andrés <-> Visitante).
 // ============================================================================
 
-const STORAGE_KEY = 'tuSolucionLSC_shared_state_v3';
-const CHANNEL_NAME = 'tuSolucionLSC_sync_channel_v3';
+const STORAGE_KEY = 'tuSolucionLSC_shared_state_v4';
+const CHANNEL_NAME = 'tuSolucionLSC_sync_channel_v4';
 const MQTT_BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
-const MQTT_TOPIC_PREFIX = 'icesi/tusolucionlsc/v3/pin/';
+const MQTT_TOPIC_PREFIX = 'icesi/tusolucionlsc/v4/pin/';
 
 const CLIENT_INSTANCE_ID = 'cli-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 const processedEventIds = new Set();
@@ -109,6 +111,12 @@ const DEFAULT_STATE = {
   videoCurrentTime: 0,
   desktopPreviewPlaying: false,
   miniClipModal: null,
+  // Modales de flujo robusto en el celular:
+  // null | 'confirm-chat' | 'next-question-choice' | 'back-from-chat-choice'
+  mobileFlowModal: null,
+  // Textos de estado bilateral en tiempo real
+  visitorLiveActivity: 'En pantalla de bienvenida',
+  agentLiveActivity: 'Esperando vinculación por PIN',
   chatMessages: [],
   mobileDraftMsg: '',
   desktopDraftMsg: ''
@@ -130,7 +138,6 @@ const netStatus = {
   isLinkingPin: false
 };
 
-// Detectar rol fijo (si se abrió desde /funcionario, /visitante o ?mode=...)
 const urlParams = new URLSearchParams(window.location.search);
 const fixedRole = window.APP_FIXED_ROLE || urlParams.get('mode');
 if (fixedRole === 'desktop' || fixedRole === 'mobile' || fixedRole === 'split') {
@@ -162,7 +169,7 @@ function saveAndSyncState(partial = {}, broadcastLocal = true) {
   renderApp();
 }
 
-function showLiveToast(message) {
+function showLiveToast(message, icon = '🔔') {
   let toastEl = document.getElementById('live-toast-banner');
   if (!toastEl) {
     toastEl = document.createElement('div');
@@ -170,12 +177,51 @@ function showLiveToast(message) {
     toastEl.className = 'live-toast';
     document.body.appendChild(toastEl);
   }
-  toastEl.innerHTML = `<span style="color:#5CBFBC;">●</span> <span>${escapeHtml(message)}</span>`;
+  toastEl.innerHTML = `<span style="font-size:16px;">${icon}</span> <span>${escapeHtml(message)}</span>`;
   toastEl.style.display = 'flex';
   if (toastTimeout) clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
     if (toastEl) toastEl.style.display = 'none';
-  }, 3800);
+  }, 4200);
+}
+
+// ============================================================================
+// DESCRIPCIONES DE ESTADO EN VIVO PARA AMBAS PARTES (ALERTAS BILATERALES)
+// ============================================================================
+
+function getVisitorStatusDescription(mScreen, catId) {
+  const cat = CATEGORIES_DATA[catId] || CATEGORIES_DATA.requisitos;
+  switch (mScreen) {
+    case 'P01': return 'En pantalla de bienvenida';
+    case 'P02': return 'Viendo el código PIN para vincular';
+    case 'P03': return 'Explorando el apartado de categorías (Paso 1 de 3)';
+    case 'P04': return `Eligiendo una pregunta en «${cat.name}» (Paso 2 de 3)`;
+    case 'P05': return `Confirmando envío de pregunta de «${cat.name}» (Paso 3 de 3)`;
+    case 'P06': return 'Esperando tu respuesta en video LSC';
+    case 'P07': return `Reproduciendo el video LSC («${cat.name}») en su celular`;
+    case 'P08': return 'Video visto · Decidiendo si hacer otra pregunta o finalizar';
+    case 'P09': return 'En el chat directo contigo';
+    case 'P10': return 'Atención finalizada en el celular';
+    case 'E02': return 'Viendo aviso de «Pregunta no disponible» en LSC';
+    default: return 'Conectada en la aplicación';
+  }
+}
+
+function getAgentStatusDescription(dScreen, videoId) {
+  const vid = CATEGORIES_DATA[videoId] || CATEGORIES_DATA.requisitos;
+  switch (dScreen) {
+    case 'A01': return 'En pantalla de inicio';
+    case 'A02': return 'Ingresando el código PIN...';
+    case 'A03': return 'Conectado · Esperando que elijas y envíes tu pregunta';
+    case 'A04': return '¡Recibió tu pregunta! Revisando el video LSC sugerido...';
+    case 'A05': return 'Buscando el video adecuado en la biblioteca LSC...';
+    case 'A06': return `Revisando vista previa de «${vid.videoTitle}» antes de enviártelo...`;
+    case 'A07': return 'Te envió el video en LSC · Atento por si tienes otra consulta';
+    case 'A08': return 'Atención finalizada';
+    case 'A09': return 'Recibió tu solicitud de chat directo · Abriendo conversación...';
+    case 'A10': return 'En el chat activo contigo · Listo para responderte';
+    default: return 'Conectado en el panel de atención';
+  }
 }
 
 // ============================================================================
@@ -183,7 +229,6 @@ function showLiveToast(message) {
 // ============================================================================
 
 function initCloudSync() {
-  // 1. Iniciar cliente MQTT over Secure WebSockets (entrega en < 50ms entre redes)
   if (typeof mqtt !== 'undefined') {
     try {
       mqttClient = mqtt.connect(MQTT_BROKER_URL, {
@@ -210,20 +255,16 @@ function initCloudSync() {
         }
       });
 
-      mqttClient.on('error', () => {
-        // El fallback por /api/session sigue funcionando aunque MQTT falle
-      });
+      mqttClient.on('error', () => {});
     } catch (e) {
       console.warn('No se pudo iniciar MQTT:', e);
     }
   }
 
-  // 2. Suscribir a la sala del PIN actual y activar polling HTTP a /api/session
   if (state.sessionPin) {
     subscribeToPinRoom(state.sessionPin);
   }
 
-  // Registrar el PIN en el backend de Vercel si estamos en celular o vista dividida
   if (state.viewMode !== 'desktop') {
     registerPinOnServer(state.sessionPin);
   }
@@ -258,16 +299,13 @@ async function registerPinOnServer(pin) {
       netStatus.cloudConnected = true;
       renderApp();
     }
-  } catch (e) {
-    // Ignorar si se abre como archivo local file://
-  }
+  } catch (e) {}
 }
 
 async function pollServerEvents() {
   const activePin = String(state.sessionPin || '').trim();
   if (!activePin || activePin.length !== 4) return;
 
-  // Si estamos en PC y aún no hemos vinculado el PIN, no hacer polling hasta que vincule
   if (window.APP_FIXED_ROLE === 'desktop' && !state.isLinked && !netStatus.isLinkingPin) {
     return;
   }
@@ -290,9 +328,7 @@ async function pollServerEvents() {
         });
       }
     }
-  } catch (e) {
-    // Si se ejecuta desde file:// sin servidor, funciona vía MQTT y BroadcastChannel
-  }
+  } catch (e) {}
 }
 
 async function dispatchCloudEvent(eventPayload, targetPin = state.sessionPin) {
@@ -307,7 +343,6 @@ async function dispatchCloudEvent(eventPayload, targetPin = state.sessionPin) {
 
   processedEventIds.add(fullEvent.eventId);
 
-  // 1. Publicar inmediatamente por MQTT WebSockets (< 50ms)
   if (mqttClient && mqttClient.connected) {
     try {
       mqttClient.publish(MQTT_TOPIC_PREFIX + pin, JSON.stringify(fullEvent), { qos: 0 });
@@ -316,7 +351,6 @@ async function dispatchCloudEvent(eventPayload, targetPin = state.sessionPin) {
     }
   }
 
-  // 2. Publicar también en Vercel Serverless API (/api/session)
   try {
     await fetch('/api/session', {
       method: 'POST',
@@ -327,9 +361,7 @@ async function dispatchCloudEvent(eventPayload, targetPin = state.sessionPin) {
         event: fullEvent
       })
     });
-  } catch (e) {
-    // Si no hay backend /api/session disponible, MQTT y BroadcastChannel ya lo enviaron
-  }
+  } catch (e) {}
 }
 
 function processIncomingCloudEvent(ev) {
@@ -341,15 +373,16 @@ function processIncomingCloudEvent(ev) {
 
   switch (ev.type) {
     case 'LINK_SUCCESS':
-      showLiveToast(`¡Dispositivos vinculados con el PIN ${ev.pin || state.sessionPin}!`);
+      showLiveToast(`¡Conexión establecida con el PIN ${ev.pin || state.sessionPin}!`, '✅');
       saveAndSyncState({
         sessionPin: ev.pin || state.sessionPin,
         isLinked: true,
+        agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
+        visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
         desktopScreen: state.desktopScreen === 'A01' || state.desktopScreen === 'A02' ? 'A03' : state.desktopScreen,
         mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
       });
 
-      // Si este dispositivo es el celular y ya tenía una pregunta en espera (P06) o un chat abierto (P09), reenviar estado al PC
       if (window.APP_FIXED_ROLE !== 'desktop') {
         if (state.mobileScreen === 'P06') {
           dispatchCloudEvent({
@@ -366,34 +399,64 @@ function processIncomingCloudEvent(ev) {
       }
       break;
 
+    case 'MOBILE_STATUS_UPDATE': {
+      const desc = getVisitorStatusDescription(ev.mobileScreen, ev.categoryId || state.selectedCategoryId);
+      if (ev.toastForAgent) {
+        showLiveToast(ev.toastForAgent, '📱');
+      }
+      saveAndSyncState({
+        visitorLiveActivity: desc,
+        selectedCategoryId: ev.categoryId || state.selectedCategoryId
+      });
+      break;
+    }
+
+    case 'DESKTOP_STATUS_UPDATE': {
+      const desc = getAgentStatusDescription(ev.desktopScreen, ev.videoId || state.selectedVideoId);
+      if (ev.toastForVisitor) {
+        showLiveToast(ev.toastForVisitor, '💻');
+      }
+      saveAndSyncState({
+        agentLiveActivity: desc
+      });
+      break;
+    }
+
     case 'VISITOR_QUESTION':
-      showLiveToast(`Nueva pregunta recibida: «${ev.question}»`);
+      showLiveToast(`Nueva pregunta recibida: «${ev.question}»`, '📩');
       saveAndSyncState({
         isLinked: true,
         selectedCategoryId: ev.categoryId || 'programas',
         selectedVideoId: ev.categoryId || 'programas',
         selectedQuestion: ev.question,
+        visitorLiveActivity: 'Esperando tu respuesta en video LSC',
+        agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
         desktopScreen: 'A04'
       });
       break;
 
     case 'SEND_LSC_VIDEO':
-      showLiveToast('¡Video en LSC recibido desde el computador de Andrés!');
+      showLiveToast('¡Andrés te ha enviado el video de respuesta en LSC!', '🎬');
       saveAndSyncState({
         isLinked: true,
         selectedVideoId: ev.videoId || state.selectedCategoryId,
         selectedCategoryId: ev.categoryId || state.selectedCategoryId,
         selectedQuestion: ev.question || state.selectedQuestion,
+        agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
+        visitorLiveActivity: 'Reproduciendo el video LSC en su celular',
         mobileScreen: 'P07',
+        mobileFlowModal: null,
         videoPlaying: true,
         videoCurrentTime: 0
       });
       break;
 
     case 'START_DIRECT_CHAT':
-      showLiveToast('La persona visitante solicitó chat directo («No encuentro mi pregunta»).');
+      showLiveToast('La visitante confirmó entrar al chat directo («No encuentro mi pregunta»).', '💬');
       saveAndSyncState({
         isLinked: true,
+        visitorLiveActivity: 'En el chat directo contigo',
+        agentLiveActivity: 'Recibió tu solicitud de chat directo',
         chatMessages: Array.isArray(ev.chatMessages) && ev.chatMessages.length > state.chatMessages.length
           ? ev.chatMessages
           : state.chatMessages,
@@ -402,9 +465,12 @@ function processIncomingCloudEvent(ev) {
       break;
 
     case 'OPEN_CHAT':
+      showLiveToast('Andrés abrió el chat y está listo para responderte.', '💬');
       saveAndSyncState({
         isLinked: true,
-        mobileScreen: 'P09'
+        agentLiveActivity: 'En el chat activo contigo · Listo para responderte',
+        mobileScreen: 'P09',
+        mobileFlowModal: null
       });
       break;
 
@@ -414,36 +480,54 @@ function processIncomingCloudEvent(ev) {
         const updatedMessages = exists ? state.chatMessages : [...state.chatMessages, ev.message];
 
         if (ev.message.sender === 'visitor') {
-          showLiveToast(`Mensaje de visitante: "${ev.message.text.slice(0, 35)}"`);
+          showLiveToast(`Mensaje de visitante: "${ev.message.text.slice(0, 38)}"`, '💬');
           saveAndSyncState({
             isLinked: true,
+            visitorLiveActivity: 'Te envió un mensaje en el chat directo',
             chatMessages: updatedMessages,
             desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
           });
         } else {
-          showLiveToast(`Mensaje de Andrés: "${ev.message.text.slice(0, 35)}"`);
+          showLiveToast(`Nuevo mensaje de Andrés: "${ev.message.text.slice(0, 38)}"`, '💬');
           saveAndSyncState({
             isLinked: true,
+            agentLiveActivity: 'Te acaba de responder en el chat',
             chatMessages: updatedMessages,
-            mobileScreen: 'P09'
+            mobileScreen: 'P09',
+            mobileFlowModal: null
           });
         }
       }
       break;
 
-    case 'NEW_INQUIRY':
-      showLiveToast('La persona visitante está eligiendo una nueva pregunta.');
+    case 'NEW_INQUIRY_SAME_CAT': {
+      const catObj = CATEGORIES_DATA[ev.categoryId] || CATEGORIES_DATA.requisitos;
+      showLiveToast(`La visitante quiere hacer otra pregunta de «${catObj.name}».`, '📌');
       saveAndSyncState({
+        selectedCategoryId: ev.categoryId || state.selectedCategoryId,
+        visitorLiveActivity: `Eligiendo otra pregunta de «${catObj.name}» (Paso 2 de 3)`,
+        desktopScreen: 'A03'
+      });
+      break;
+    }
+
+    case 'NEW_INQUIRY_ALL_CATS':
+      showLiveToast('La visitante volvió al apartado de categorías para elegir otro tema.', '📂');
+      saveAndSyncState({
+        visitorLiveActivity: 'Explorando el apartado de categorías (Paso 1 de 3)',
         desktopScreen: 'A03'
       });
       break;
 
     case 'FINISH_SESSION':
-      showLiveToast('La sesión de atención ha finalizado.');
+      showLiveToast('La sesión de atención ha finalizado.', '✅');
       saveAndSyncState({
         isLinked: false,
+        visitorLiveActivity: 'Atención finalizada',
+        agentLiveActivity: 'Atención finalizada',
         desktopScreen: 'A08',
-        mobileScreen: 'P10'
+        mobileScreen: 'P10',
+        mobileFlowModal: null
       });
       break;
 
@@ -452,6 +536,7 @@ function processIncomingCloudEvent(ev) {
         isLinked: false,
         desktopScreen: 'A01',
         mobileScreen: 'P01',
+        mobileFlowModal: null,
         videoCurrentTime: 0,
         chatMessages: []
       });
@@ -485,7 +570,6 @@ function setupLocalRealtimeSync() {
   });
 }
 
-// Temporizador para simular la reproducción del video en LSC en tiempo real
 function startVideoSimulationTicker() {
   if (videoTimerInterval) clearInterval(videoTimerInterval);
   videoTimerInterval = setInterval(() => {
@@ -591,6 +675,26 @@ function getPhoneStatusBarHTML(onHero = false) {
 // RENDERIZADO DE LAS 12 PANTALLAS DE ESCRITORIO (FUNCIONARIO: PANEL DE ANDRÉS)
 // ============================================================================
 
+function renderDesktopLiveAlertBanner() {
+  const showBannerScreens = ['A03', 'A04', 'A05', 'A06', 'A07', 'A09', 'A10'];
+  if (!showBannerScreens.includes(state.desktopScreen)) return '';
+
+  const isWaitingReply = state.mobileScreen === 'P06';
+  const isWatchingVideo = state.mobileScreen === 'P07';
+  const isInChat = state.mobileScreen === 'P09';
+  const toneClass = isWaitingReply ? 'tone-warning' : (isWatchingVideo ? 'tone-teal' : 'tone-purple');
+
+  return `
+    <div class="bilateral-status-banner ${toneClass}">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:16px;">📱</span>
+        <span><strong>Estado del celular en vivo:</strong> ${escapeHtml(state.visitorLiveActivity)}</span>
+      </div>
+      <span style="font-size:12px;opacity:0.85;">PIN ${state.sessionPin}</span>
+    </div>
+  `;
+}
+
 function renderDesktopPane() {
   const showLinkedPill = ['A03', 'A04', 'A05', 'A06', 'AE02', 'A07', 'A09', 'A10'].includes(state.desktopScreen);
 
@@ -610,6 +714,7 @@ function renderDesktopPane() {
       </div>
     </div>
     <div class="desktop-content">
+      ${renderDesktopLiveAlertBanner()}
       ${renderDesktopScreenContent()}
     </div>
   `;
@@ -1060,7 +1165,7 @@ function renderDesktopScreenContent() {
           </div>
 
           <p style="font-size:14px;color:var(--text-muted);margin-bottom:22px;">
-            Puedes esperar si la visitante realiza otra consulta o finalizar la atención.
+            Si la visitante decide realizar otra pregunta (de la misma categoría o de otra), esta pantalla se actualizará automáticamente.
           </p>
 
           <div class="btn-row-center">
@@ -1109,8 +1214,7 @@ function renderDesktopScreenContent() {
     // A09 · Solicitud de chat directo
     // ------------------------------------------------------------------------
     case 'A09': {
-      const lastVisitorMsg = [...state.chatMessages].reverse().find(m => m.sender === 'visitor')
-        || { text: 'Hola, quiero saber si puedo homologar materias de otra universidad para mi hijo...' };
+      const lastVisitorMsg = [...state.chatMessages].reverse().find(m => m.sender === 'visitor');
       return `
         <div class="desktop-center-card" style="max-width:680px;">
           <div class="status-circle purple">
@@ -1119,18 +1223,20 @@ function renderDesktopScreenContent() {
           <div class="pill-tag navy">NUEVA SOLICITUD DE CHAT DIRECTO</div>
           <h2>La visitante no encontró su pregunta en las categorías</h2>
           <p class="subtitle">
-            La persona visitante seleccionó la opción «No encuentro mi pregunta» desde su celular y ha iniciado una conversación por texto contigo.
+            La persona visitante confirmó entrar al chat desde la opción «No encuentro mi pregunta» en su celular.
           </p>
 
           <div style="background:var(--purple-light);border:2px solid var(--purple-primary);border-radius:18px;padding:20px 24px;text-align:left;margin-bottom:28px;">
             <div style="font-size:11px;font-weight:800;color:var(--purple-primary);text-transform:uppercase;margin-bottom:6px;">
-              MENSAJE RECIBIDO DESDE EL CELULAR:
+              ${lastVisitorMsg ? 'MENSAJE RECIBIDO DESDE EL CELULAR:' : 'ESTADO DEL CHAT EN EL CELULAR:'}
             </div>
             <div style="font-size:18px;font-weight:800;color:var(--navy-dark);margin-bottom:6px;">
-              «${escapeHtml(lastVisitorMsg.text)}»
+              ${lastVisitorMsg
+                ? `«${escapeHtml(lastVisitorMsg.text)}»`
+                : '«La visitante abrió la ventana de chat y está escribiendo su consulta...»'}
             </div>
             <div style="font-size:13px;color:var(--text-muted);">
-              Enviado hace un momento · Esperando tu respuesta
+              Solicitud confirmada por la visitante · Esperando tu respuesta
             </div>
           </div>
 
@@ -1166,7 +1272,7 @@ function renderDesktopScreenContent() {
         <div class="a10-chat-box" id="desktop-chat-scroll">
           ${state.chatMessages.length === 0 ? `
             <div style="margin:auto;text-align:center;color:var(--text-muted);font-size:14.5px;">
-              No hay mensajes aún. Escribe un mensaje abajo para enviarlo al celular de la visitante.
+              El chat está abierto. Puedes saludar a la visitante o esperar su mensaje.
             </div>
           ` : state.chatMessages.map(m => `
             <div class="chat-msg-group ${m.sender === 'visitor' ? 'visitor' : 'agent'}">
@@ -1200,6 +1306,21 @@ function renderDesktopScreenContent() {
 // RENDERIZADO DE LAS 14 PANTALLAS DE CELULAR (PERSONA VISITANTE)
 // ============================================================================
 
+function renderMobileLiveStatusStrip() {
+  const showStripScreens = ['P03', 'P04', 'P05', 'P06', 'P07', 'P08', 'P09'];
+  if (!state.isLinked || !showStripScreens.includes(state.mobileScreen)) return '';
+
+  const isVideoReady = state.desktopScreen === 'A07' || state.mobileScreen === 'P07';
+  const toneClass = isVideoReady ? 'tone-teal' : '';
+
+  return `
+    <div class="mobile-status-strip ${toneClass}">
+      <span>💻</span>
+      <span><strong>Andrés:</strong> ${escapeHtml(state.agentLiveActivity)}</span>
+    </div>
+  `;
+}
+
 function renderMobilePane() {
   const isHeroScreen = state.mobileScreen === 'P01';
   return `
@@ -1207,6 +1328,7 @@ function renderMobilePane() {
       ${getPhoneStatusBarHTML(isHeroScreen)}
       <div class="phone-screen-body">
         ${renderMobileScreenContent()}
+        ${renderMobileFlowModalIfActive()}
         ${renderMiniClipModalIfActive()}
       </div>
     </div>
@@ -1258,7 +1380,7 @@ function renderMobileScreenContent() {
             </div>
           </div>
 
-          <button class="btn-primary" style="width:100%;padding:17px;" onclick="goToMobile('P02')">
+          <button class="btn-primary" style="width:100%;padding:17px;" onclick="goToMobile(state.isLinked ? 'P03' : 'P02')">
             Comenzar consulta
           </button>
         </div>
@@ -1392,10 +1514,11 @@ function renderMobileScreenContent() {
       return `
         <div class="mobile-topbar">
           <button class="mobile-back-btn" onclick="goToMobile('P02')">
-            <span>←</span> <span>Inicio</span>
+            <span>←</span> <span>PIN ${state.sessionPin}</span>
           </button>
           <span class="mobile-step-indicator">Paso 1 de 3</span>
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad">
           <h2 style="font-size:26px;font-weight:800;color:var(--navy-dark);line-height:1.2;">
             ¿Sobre qué tema deseas consultar?
@@ -1414,7 +1537,7 @@ function renderMobileScreenContent() {
           </div>
 
           <div style="margin-top:auto;padding-top:20px;">
-            <button class="btn-outline" style="width:100%;padding:15px;" onclick="startDirectChatFromMobile()">
+            <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
               <span>💬</span> <span>No encuentro mi pregunta</span>
             </button>
           </div>
@@ -1432,6 +1555,7 @@ function renderMobileScreenContent() {
           </button>
           <span class="mobile-step-indicator">Paso 2 de 3</span>
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad">
           <div>
             <span class="pill-tag" style="text-transform:none;font-size:13px;padding:6px 14px;margin-bottom:10px;">
@@ -1455,7 +1579,7 @@ function renderMobileScreenContent() {
           </div>
 
           <div style="margin-top:auto;padding-top:18px;">
-            <button class="btn-outline" style="width:100%;padding:15px;" onclick="startDirectChatFromMobile()">
+            <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
               <span>💬</span> <span>No encuentro mi pregunta</span>
             </button>
           </div>
@@ -1463,17 +1587,18 @@ function renderMobileScreenContent() {
       `;
 
     // ------------------------------------------------------------------------
-    // E02 · Pregunta no disponible
+    // E02 · Pregunta no disponible (Con confirmación antes de entrar al chat)
     // ------------------------------------------------------------------------
     case 'E02':
       return `
         <div class="mobile-topbar">
           <button class="mobile-back-btn" onclick="goToMobile('P04')">
-            <span>←</span> <span>Pregunta</span>
+            <span>←</span> <span>Volver a preguntas</span>
           </button>
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad" style="align-items:center;text-align:center;">
-          <div class="status-circle purple" style="width:74px;height:74px;margin-top:10px;">
+          <div class="status-circle purple" style="width:74px;height:74px;margin-top:6px;">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="8"/>
               <line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -1483,11 +1608,11 @@ function renderMobileScreenContent() {
           <h2 style="font-size:25px;font-weight:800;color:var(--navy-dark);margin-bottom:8px;">
             Pregunta no disponible
           </h2>
-          <p style="font-size:15px;color:var(--text-muted);line-height:1.45;margin-bottom:22px;">
-            No tenemos un video para este tema. Puedes ver otra categoría o escribirle a Andrés.
+          <p style="font-size:15px;color:var(--text-muted);line-height:1.45;margin-bottom:20px;">
+            No tenemos un video para este tema. Puedes ver otra categoría o confirmar si deseas escribirle a Andrés por chat.
           </p>
 
-          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:24px;" onclick="openMiniClip('Mensaje en LSC', '0:15', '🔍 En este momento no tenemos un video pregrabado para esa pregunta. Escríbele a Andrés en el chat.')">
+          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:22px;" onclick="openMiniClip('Mensaje en LSC', '0:15', '🔍 En este momento no tenemos un video pregrabado para esa pregunta. Si deseas, confirma para abrir el chat con Andrés.')">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1507,8 +1632,8 @@ function renderMobileScreenContent() {
             <button class="btn-primary" style="width:100%;padding:16px;" onclick="goToMobile('P03')">
               Ver otras categorías
             </button>
-            <button class="btn-outline" style="width:100%;padding:15px;" onclick="startDirectChatFromMobile()">
-              <span>💬</span> <span>Escribir a Andrés</span>
+            <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
+              <span>💬</span> <span>Escribir a Andrés (Confirmar)</span>
             </button>
             <button class="link-underline-btn" onclick="finishSessionBothSides()">
               Finalizar consulta
@@ -1528,6 +1653,7 @@ function renderMobileScreenContent() {
           </button>
           <span class="mobile-step-indicator">Paso 3 de 3</span>
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad">
           <h2 style="font-size:26px;font-weight:800;color:var(--navy-dark);line-height:1.2;margin-bottom:8px;">
             ¿Deseas enviar esta pregunta?
@@ -1550,7 +1676,7 @@ function renderMobileScreenContent() {
               <span>✈️</span> <span>Enviar pregunta</span>
             </button>
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="goToMobile('P04')">
-              Cambiar pregunta
+              Cambiar pregunta de ${cat.name}
             </button>
           </div>
         </div>
@@ -1611,27 +1737,28 @@ function renderMobileScreenContent() {
         <div class="mobile-topbar">
           ${getBrandLogoSVG('small')}
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad" style="align-items:center;text-align:center;">
-          <div class="status-circle purple" style="width:80px;height:80px;margin-top:12px;">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <div class="status-circle purple" style="width:76px;height:76px;margin-top:6px;">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <polyline points="12 6 12 12 16 14"/>
             </svg>
           </div>
 
-          <h2 style="font-size:25px;font-weight:800;color:var(--navy-dark);line-height:1.22;margin-bottom:8px;">
+          <h2 style="font-size:24px;font-weight:800;color:var(--navy-dark);line-height:1.22;margin-bottom:8px;">
             Consulta enviada, esperando respuesta
           </h2>
-          <p style="font-size:15px;color:var(--text-muted);line-height:1.45;margin-bottom:18px;">
-            Andrés está buscando el video en LSC para responderte.
+          <p style="font-size:14.5px;color:var(--text-muted);line-height:1.45;margin-bottom:16px;">
+            Andrés está preparando el video en LSC para responderte.
           </p>
 
-          <div style="display:inline-flex;align-items:center;gap:8px;background:var(--navy-dark);color:var(--white);padding:9px 18px;border-radius:999px;font-size:13.5px;font-weight:700;margin-bottom:22px;">
+          <div style="display:inline-flex;align-items:center;gap:8px;background:var(--navy-dark);color:var(--white);padding:9px 18px;border-radius:999px;font-size:13.5px;font-weight:700;margin-bottom:20px;">
             <span>🕒</span>
             <span>Esperando respuesta de Andrés</span>
           </div>
 
-          <div style="width:100%;background:var(--purple-light);border-radius:20px;padding:18px 20px;text-align:left;margin-bottom:20px;">
+          <div style="width:100%;background:var(--purple-light);border-radius:20px;padding:18px 20px;text-align:left;margin-bottom:18px;">
             <span class="pill-tag" style="background:var(--white);text-transform:none;font-size:12px;padding:4px 12px;margin-bottom:10px;">
               ${cat.name}
             </span>
@@ -1640,10 +1767,10 @@ function renderMobileScreenContent() {
             </div>
           </div>
 
-          <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px;text-align:left;margin-top:auto;">
+          <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:13px 15px;display:flex;align-items:center;gap:12px;text-align:left;margin-top:auto;">
             <span style="color:var(--purple-primary);font-weight:800;">⚠️</span>
             <span style="font-size:13px;color:var(--text-muted);line-height:1.4;">
-              No puedes hacer otra pregunta hasta recibir esta respuesta.
+              Cuando Andrés envíe el video, se reproducirá automáticamente aquí.
             </span>
           </div>
         </div>
@@ -1663,13 +1790,16 @@ function renderMobileScreenContent() {
           <button class="mobile-back-btn" onclick="goToMobile('P08')">
             <span>←</span> <span>Respuesta</span>
           </button>
+          <span class="pill-tag teal" style="margin-bottom:0;font-size:10.5px;padding:4px 10px;">
+            ✓ Video recibido
+          </span>
         </div>
-        <div class="mobile-pad">
-          <div style="font-size:15px;font-weight:800;color:var(--navy-dark);margin-bottom:12px;line-height:1.3;">
+        <div class="mobile-pad" style="padding-top:16px;">
+          <div style="font-size:15px;font-weight:800;color:var(--navy-dark);margin-bottom:10px;line-height:1.3;">
             ${escapeHtml(state.selectedQuestion)}
           </div>
 
-          <div class="p07-video-card" onclick="toggleMobileVideoPlay()" style="cursor:pointer;">
+          <div class="p07-video-card" style="height:330px;" onclick="toggleMobileVideoPlay()" style="cursor:pointer;">
             <div class="lsc-signer-sim">
               <div class="lsc-hands-pulse" style="${state.videoPlaying ? '' : 'animation:none;opacity:0.75;'}">
                 <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1709,7 +1839,7 @@ function renderMobileScreenContent() {
             </button>
           </div>
 
-          <button class="btn-primary" style="width:100%;padding:16px;margin-top:16px;" onclick="goToMobile('P08')">
+          <button class="btn-primary" style="width:100%;padding:16px;margin-top:14px;" onclick="goToMobile('P08')">
             Continuar
           </button>
         </div>
@@ -1758,33 +1888,37 @@ function renderMobileScreenContent() {
       `;
 
     // ------------------------------------------------------------------------
-    // P08 · Nueva consulta o finalizar
+    // P08 · Nueva consulta o finalizar (Permite elegir misma categoría u otra categoría)
     // ------------------------------------------------------------------------
     case 'P08':
       return `
         <div class="mobile-topbar">
           ${getBrandLogoSVG('small')}
         </div>
+        ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad" style="align-items:center;text-align:center;justify-content:center;">
-          <div class="status-circle purple" style="width:84px;height:84px;">
-            <span style="font-size:38px;font-weight:800;">?</span>
+          <div class="status-circle purple" style="width:76px;height:76px;">
+            <span style="font-size:34px;font-weight:800;">?</span>
           </div>
 
-          <h2 style="font-size:26px;font-weight:800;color:var(--navy-dark);margin-bottom:8px;">
+          <h2 style="font-size:25px;font-weight:800;color:var(--navy-dark);margin-bottom:6px;">
             ¿Qué deseas hacer ahora?
           </h2>
-          <p style="font-size:15px;color:var(--text-muted);margin-bottom:32px;">
-            Elige una opción para continuar.
+          <p style="font-size:14.5px;color:var(--text-muted);margin-bottom:22px;">
+            Puedes hacer otra pregunta en esta misma categoría, cambiar de categoría o finalizar.
           </p>
 
-          <div style="width:100%;display:flex;flex-direction:column;gap:14px;">
-            <button class="btn-primary" style="width:100%;padding:16px;" onclick="startAnotherQuestion()">
+          <div style="width:100%;display:flex;flex-direction:column;gap:12px;">
+            <button class="btn-primary" style="width:100%;padding:16px;" onclick="promptNextQuestionChoiceModal()">
               Realizar otra pregunta
             </button>
-            <button class="btn-outline" style="width:100%;padding:16px;" onclick="finishSessionBothSides()">
+            <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
+              <span>💬</span> <span>Ir al chat con Andrés</span>
+            </button>
+            <button class="btn-outline" style="width:100%;padding:15px;" onclick="finishSessionBothSides()">
               Finalizar atención
             </button>
-            <button class="link-underline-btn" style="margin-top:8px;" onclick="goToMobile('P07')">
+            <button class="link-underline-btn" style="margin-top:4px;" onclick="goToMobile('P07')">
               <span>↻</span> <span>Ver respuesta otra vez</span>
             </button>
           </div>
@@ -1799,13 +1933,17 @@ function renderMobileScreenContent() {
       return `
         <div class="mobile-topbar">
           ${getBrandLogoSVG('small')}
+          <span class="pill-tag teal" style="margin-bottom:0;font-size:10.5px;padding:4px 10px;">
+            Chat conectado
+          </span>
         </div>
-        <div class="mobile-pad" style="padding-top:16px;">
-          <h2 style="font-size:22px;font-weight:800;color:var(--navy-dark);margin-bottom:12px;">
+        ${renderMobileLiveStatusStrip()}
+        <div class="mobile-pad" style="padding-top:12px;">
+          <h2 style="font-size:21px;font-weight:800;color:var(--navy-dark);margin-bottom:10px;">
             Chat con Andrés
           </h2>
 
-          <div class="p09-chat-container" id="mobile-chat-scroll">
+          <div class="p09-chat-container" id="mobile-chat-scroll" style="height:300px;">
             ${state.chatMessages.length === 0 ? `
               <div style="margin:auto;text-align:center;color:var(--text-muted);font-size:13.5px;padding:12px;">
                 Escribe tu pregunta aquí abajo y Andrés la recibirá al instante en su computador.
@@ -1839,8 +1977,8 @@ function renderMobileScreenContent() {
             </button>
           </form>
 
-          <button class="btn-outline" style="width:100%;padding:14px;margin-bottom:8px;" onclick="goToMobile('P03')">
-            ← Volver a categorías
+          <button class="btn-outline" style="width:100%;padding:13px;margin-bottom:6px;" onclick="promptNextQuestionChoiceModal()">
+            ← Volver a preguntas o categorías
           </button>
           <button class="link-underline-btn" onclick="finishSessionBothSides()">
             Finalizar atención
@@ -1898,10 +2036,91 @@ function renderMobileScreenContent() {
   }
 }
 
+// ============================================================================
+// MODALES DE CONFIRMACIÓN EN EL CELULAR:
+// 1. Confirmar entrada al chat ("No encuentro mi pregunta")
+// 2. Elegir si hacer otra pregunta de la misma categoría o ir a categorías
+// ============================================================================
+
+function renderMobileFlowModalIfActive() {
+  if (!state.mobileFlowModal) return '';
+  const cat = CATEGORIES_DATA[state.selectedCategoryId] || CATEGORIES_DATA.requisitos;
+
+  // Modal 1: Confirmar si realmente desea entrar al chat con Andrés
+  if (state.mobileFlowModal === 'confirm-chat') {
+    return `
+      <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
+        <div class="phone-modal-sheet" onclick="event.stopPropagation()">
+          <div class="status-circle purple" style="width:58px;height:58px;margin-bottom:4px;">
+            <span style="font-size:24px;">💬</span>
+          </div>
+          <h3>¿Deseas entrar al chat con Andrés?</h3>
+          <p>
+            Si no encontraste tu pregunta en la lista, puedes iniciar un chat escrito con Andrés. ¿Confirmas que deseas abrir el chat?
+          </p>
+
+          <button class="btn-primary" style="width:100%;padding:15px;" onclick="confirmAndEnterDirectChat()">
+            ✓ Sí, confirmar y abrir chat
+          </button>
+
+          ${state.mobileScreen !== 'E02' ? `
+            <button class="btn-outline" style="width:100%;padding:13px;font-size:14px;" onclick="openE02FromChatPrompt()">
+              🤟 Ver aviso en LSC (Pregunta no disponible)
+            </button>
+          ` : ''}
+
+          <button class="link-underline-btn" style="font-size:14px;" onclick="closeMobileFlowModal()">
+            ✕ No, volver a las preguntas
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Modal 2: Elegir entre otra pregunta de la misma categoría o volver al apartado de categorías
+  if (state.mobileFlowModal === 'next-question-choice') {
+    return `
+      <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
+        <div class="phone-modal-sheet" onclick="event.stopPropagation()">
+          <div class="status-circle purple" style="width:58px;height:58px;margin-bottom:4px;">
+            <span style="font-size:24px;">❓</span>
+          </div>
+          <h3>¿Dónde quieres hacer tu pregunta?</h3>
+          <p>
+            Elige si deseas ver otra pregunta del mismo tema o cambiar de categoría (sin perder tu conexión con Andrés):
+          </p>
+
+          <button class="choice-card-btn" onclick="chooseAnotherQuestionSameCategory()">
+            <div>
+              <span class="choice-card-title">📌 Misma categoría: ${escapeHtml(cat.name)}</span>
+              <span class="choice-card-sub">Elegir otra pregunta sobre este mismo tema (Paso 2 de 3)</span>
+            </div>
+            <span style="font-size:22px;color:var(--purple-primary);font-weight:800;">›</span>
+          </button>
+
+          <button class="choice-card-btn secondary" onclick="chooseAnotherQuestionAllCategories()">
+            <div>
+              <span class="choice-card-title">📂 Ir al apartado de categorías</span>
+              <span class="choice-card-sub">Cambiar a otro tema diferente (Paso 1 de 3)</span>
+            </div>
+            <span style="font-size:22px;color:var(--purple-primary);font-weight:800;">›</span>
+          </button>
+
+          <button class="link-underline-btn" style="font-size:14px;" onclick="closeMobileFlowModal()">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  return '';
+}
+
 function renderMiniClipModalIfActive() {
   if (!state.miniClipModal) return '';
   return `
-    <div style="position:absolute;inset:0;background:rgba(24,20,64,0.82);backdrop-filter:blur(4px);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;">
+    <div style="position:absolute;inset:0;background:rgba(24,20,64,0.82);backdrop-filter:blur(4px);z-index:70;display:flex;align-items:center;justify-content:center;padding:20px;">
       <div style="background:var(--white);border-radius:24px;padding:22px;width:100%;text-align:center;box-shadow:0 14px 40px rgba(0,0,0,0.3);">
         <div style="background:var(--gradient-lsc);border-radius:18px;padding:28px 16px;color:white;margin-bottom:16px;">
           <div class="lsc-hands-pulse" style="margin:0 auto 12px;">
@@ -1932,7 +2151,20 @@ function setViewMode(mode) {
 }
 
 function goToDesktop(screenId) {
-  saveAndSyncState({ desktopScreen: screenId, desktopPreviewPlaying: false });
+  const agentDesc = getAgentStatusDescription(screenId, state.selectedVideoId);
+  saveAndSyncState({
+    desktopScreen: screenId,
+    desktopPreviewPlaying: false,
+    agentLiveActivity: agentDesc
+  });
+
+  if (state.isLinked) {
+    dispatchCloudEvent({
+      type: 'DESKTOP_STATUS_UPDATE',
+      desktopScreen: screenId,
+      videoId: state.selectedVideoId
+    });
+  }
 }
 
 function openDesktopPinScreen() {
@@ -1952,8 +2184,23 @@ function openDesktopPinScreen() {
   }, 60);
 }
 
-function goToMobile(screenId) {
-  saveAndSyncState({ mobileScreen: screenId, miniClipModal: null });
+function goToMobile(screenId, toastForAgent = null) {
+  const visitorDesc = getVisitorStatusDescription(screenId, state.selectedCategoryId);
+  saveAndSyncState({
+    mobileScreen: screenId,
+    mobileFlowModal: null,
+    miniClipModal: null,
+    visitorLiveActivity: visitorDesc
+  });
+
+  if (state.isLinked) {
+    dispatchCloudEvent({
+      type: 'MOBILE_STATUS_UPDATE',
+      mobileScreen: screenId,
+      categoryId: state.selectedCategoryId,
+      toastForAgent
+    });
+  }
 }
 
 function openMiniClip(title, duration, caption) {
@@ -1962,6 +2209,22 @@ function openMiniClip(title, duration, caption) {
 
 function closeMiniClip() {
   saveAndSyncState({ miniClipModal: null }, false);
+}
+
+function promptConfirmChatModal() {
+  saveAndSyncState({ mobileFlowModal: 'confirm-chat' }, false);
+}
+
+function promptNextQuestionChoiceModal() {
+  saveAndSyncState({ mobileFlowModal: 'next-question-choice' }, false);
+}
+
+function closeMobileFlowModal() {
+  saveAndSyncState({ mobileFlowModal: null }, false);
+}
+
+function openE02FromChatPrompt() {
+  goToMobile('E02', 'La visitante está viendo el aviso de «Pregunta no disponible»');
 }
 
 // Manejo de PIN de 4 dígitos
@@ -1997,11 +2260,10 @@ function fillPinAndLink(pinStr) {
 async function attemptPinLink() {
   const entered = (state.enteredPin || []).join('').trim();
   if (entered.length !== 4) {
-    showLiveToast('Por favor ingresa los 4 dígitos del PIN del celular.');
+    showLiveToast('Por favor ingresa los 4 dígitos del PIN del celular.', '⚠️');
     return;
   }
 
-  // Si se ingresa 4805 o 0000 (o en vista dividida un PIN distinto al del celular), mostramos AE01
   if (entered === '4805' || entered === '0000' || (state.viewMode === 'split' && entered !== state.sessionPin)) {
     simulateInvalidPin(entered.split(''));
     return;
@@ -2010,12 +2272,10 @@ async function attemptPinLink() {
   netStatus.isLinkingPin = true;
   renderApp();
 
-  // Suscribir inmediatamente a la sala de ese PIN en MQTT y en /api/session
   state.sessionPin = entered;
   subscribeToPinRoom(entered);
-  lastPolledTimestamp = Date.now() - 60000; // Recuperar también eventos recientes de ese PIN
+  lastPolledTimestamp = Date.now() - 60000;
 
-  // Notificar a través de MQTT y /api/session que el computador de Andrés se vinculó con ese PIN
   await dispatchCloudEvent({
     type: 'LINK_SUCCESS',
     pin: entered
@@ -2025,12 +2285,13 @@ async function attemptPinLink() {
   saveAndSyncState({
     sessionPin: entered,
     isLinked: true,
+    visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
+    agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
     desktopScreen: 'A03',
     mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
   });
 
-  showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`);
-  // Traer cualquier pregunta que el celular ya haya enviado en esa sala
+  showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`, '✅');
   pollServerEvents();
 }
 
@@ -2043,6 +2304,7 @@ function simulateInvalidPin(customDigits) {
     desktopScreen: 'AE01',
     mobileScreen: state.viewMode === 'split' ? 'E04' : state.mobileScreen
   });
+  showLiveToast('Error: El código PIN ingresado no es válido', '❌');
 }
 
 function retryValidPinFromError() {
@@ -2067,12 +2329,14 @@ function regenerateMobilePin() {
     isLinked: false,
     mobileScreen: 'P02'
   });
-  showLiveToast(`Nuevo PIN generado: ${newPin}`);
+  showLiveToast(`Nuevo PIN generado: ${newPin}`, '🔑');
 }
 
 function proceedFromMobilePin() {
   saveAndSyncState({
     mobileScreen: 'P03',
+    visitorLiveActivity: 'Explorando el apartado de categorías (Paso 1 de 3)',
+    agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
     desktopScreen: (state.viewMode === 'split' && (state.desktopScreen === 'A01' || state.desktopScreen === 'A02')) ? 'A03' : state.desktopScreen,
     isLinked: true
   });
@@ -2085,18 +2349,38 @@ function proceedFromMobilePin() {
 // Flujo de Categorías y Preguntas (Celular -> Computador)
 function selectCategoryOnMobile(catId) {
   const cat = CATEGORIES_DATA[catId] || CATEGORIES_DATA.requisitos;
+  const visitorDesc = getVisitorStatusDescription('P04', catId);
+
   saveAndSyncState({
     selectedCategoryId: catId,
     selectedVideoId: catId,
     selectedQuestion: cat.questions[0],
-    mobileScreen: 'P04'
+    visitorLiveActivity: visitorDesc,
+    mobileScreen: 'P04',
+    mobileFlowModal: null
+  });
+
+  dispatchCloudEvent({
+    type: 'MOBILE_STATUS_UPDATE',
+    mobileScreen: 'P04',
+    categoryId: catId,
+    toastForAgent: `La visitante abrió la categoría «${cat.name}»`
   });
 }
 
 function selectQuestionOnMobile(questionText) {
+  const visitorDesc = getVisitorStatusDescription('P05', state.selectedCategoryId);
   saveAndSyncState({
     selectedQuestion: questionText,
-    mobileScreen: 'P05'
+    visitorLiveActivity: visitorDesc,
+    mobileScreen: 'P05',
+    mobileFlowModal: null
+  });
+
+  dispatchCloudEvent({
+    type: 'MOBILE_STATUS_UPDATE',
+    mobileScreen: 'P05',
+    categoryId: state.selectedCategoryId
   });
 }
 
@@ -2110,17 +2394,60 @@ function sendQuestionFromMobileToDesktop() {
   saveAndSyncState({
     isLinked: true,
     selectedVideoId: state.selectedCategoryId,
+    visitorLiveActivity: 'Esperando tu respuesta en video LSC',
+    agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
     mobileScreen: 'P06',
-    desktopScreen: 'A04'
+    desktopScreen: 'A04',
+    mobileFlowModal: null
   });
-  showLiveToast('Pregunta enviada al computador de Andrés');
+  showLiveToast('Pregunta enviada al computador de Andrés', '✈️');
+}
+
+// Opciones al querer hacer otra pregunta (Misma categoría vs. Apartado de categorías)
+function chooseAnotherQuestionSameCategory() {
+  const cat = CATEGORIES_DATA[state.selectedCategoryId] || CATEGORIES_DATA.requisitos;
+  dispatchCloudEvent({
+    type: 'NEW_INQUIRY_SAME_CAT',
+    categoryId: state.selectedCategoryId
+  });
+
+  saveAndSyncState({
+    mobileScreen: 'P04',
+    desktopScreen: 'A03',
+    mobileFlowModal: null,
+    visitorLiveActivity: `Eligiendo otra pregunta en «${cat.name}» (Paso 2 de 3)`,
+    agentLiveActivity: `Esperando tu nueva pregunta de «${cat.name}»`
+  });
+  showLiveToast(`Viendo otras preguntas de «${cat.name}»`, '📌');
+}
+
+function chooseAnotherQuestionAllCategories() {
+  dispatchCloudEvent({
+    type: 'NEW_INQUIRY_ALL_CATS'
+  });
+
+  saveAndSyncState({
+    mobileScreen: 'P03',
+    desktopScreen: 'A03',
+    mobileFlowModal: null,
+    visitorLiveActivity: 'Explorando el apartado de categorías (Paso 1 de 3)',
+    agentLiveActivity: 'Esperando que selecciones una categoría y pregunta'
+  });
+  showLiveToast('Volviste al apartado de categorías', '📂');
 }
 
 // Flujo de Biblioteca y Envío de Video en LSC (Computador -> Celular)
 function openCategoryInLibrary(catId) {
   saveAndSyncState({
     libraryFilter: catId,
-    desktopScreen: 'A05'
+    desktopScreen: 'A05',
+    agentLiveActivity: 'Buscando el video adecuado en la biblioteca LSC...'
+  });
+
+  dispatchCloudEvent({
+    type: 'DESKTOP_STATUS_UPDATE',
+    desktopScreen: 'A05',
+    videoId: catId
   });
 }
 
@@ -2129,10 +2456,19 @@ function setLibraryFilter(filter) {
 }
 
 function previewVideo(videoId) {
+  const vid = CATEGORIES_DATA[videoId] || CATEGORIES_DATA.requisitos;
   saveAndSyncState({
     selectedVideoId: videoId,
     desktopPreviewPlaying: false,
-    desktopScreen: 'A06'
+    desktopScreen: 'A06',
+    agentLiveActivity: `Revisando vista previa de «${vid.videoTitle}» antes de enviártelo...`
+  });
+
+  dispatchCloudEvent({
+    type: 'DESKTOP_STATUS_UPDATE',
+    desktopScreen: 'A06',
+    videoId,
+    toastForVisitor: `Andrés está preparando el «${vid.videoTitle}» para enviártelo`
   });
 }
 
@@ -2151,11 +2487,14 @@ function sendVideoToVisitorPhone() {
   saveAndSyncState({
     desktopScreen: 'A07',
     mobileScreen: 'P07',
+    mobileFlowModal: null,
     videoPlaying: true,
     videoCurrentTime: 0,
-    desktopPreviewPlaying: false
+    desktopPreviewPlaying: false,
+    agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
+    visitorLiveActivity: 'Reproduciendo el video LSC en su celular'
   });
-  showLiveToast('Video en LSC enviado al celular de la visitante');
+  showLiveToast('¡Video en LSC enviado y reproduciéndose en el celular!', '🎬');
 }
 
 // Controles del reproductor de video en el celular (P07)
@@ -2186,8 +2525,8 @@ function updateVideoPlayerDOMOnly() {
   if (capEl) capEl.textContent = videoObj.lscCaptions[captionIdx];
 }
 
-// Flujo de Chat en Tiempo Real entre Visitante (P09) y Andrés (A09 / A10)
-function startDirectChatFromMobile() {
+// Flujo de Chat en Tiempo Real (con confirmación previa del visitante)
+function confirmAndEnterDirectChat() {
   dispatchCloudEvent({
     type: 'START_DIRECT_CHAT',
     chatMessages: state.chatMessages
@@ -2195,9 +2534,15 @@ function startDirectChatFromMobile() {
 
   saveAndSyncState({
     isLinked: true,
+    mobileFlowModal: null,
     mobileScreen: 'P09',
-    desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
+    desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09',
+    visitorLiveActivity: 'En el chat directo contigo',
+    agentLiveActivity: state.desktopScreen === 'A10'
+      ? 'En el chat activo contigo · Listo para responderte'
+      : 'Recibió tu solicitud de chat · Abriendo conversación...'
   });
+  showLiveToast('Chat con Andrés iniciado. Se notificó a su computador.', '💬');
 }
 
 function openBothChats() {
@@ -2207,8 +2552,11 @@ function openBothChats() {
 
   saveAndSyncState({
     desktopScreen: 'A10',
-    mobileScreen: 'P09'
+    mobileScreen: 'P09',
+    mobileFlowModal: null,
+    agentLiveActivity: 'En el chat activo contigo · Listo para responderte'
   });
+  showLiveToast('Chat directo abierto con la persona visitante', '💬');
 }
 
 function handleMobileDraftInput(val) {
@@ -2240,8 +2588,10 @@ function handleMobileChatSubmit(event) {
   saveAndSyncState({
     chatMessages: [...state.chatMessages, newMsg],
     mobileDraftMsg: '',
+    visitorLiveActivity: 'Te envió un mensaje en el chat directo',
     desktopScreen: nextDesktop
   });
+  showLiveToast('Mensaje enviado a Andrés', '✓');
 }
 
 function handleDesktopChatSubmit(event) {
@@ -2265,20 +2615,10 @@ function handleDesktopChatSubmit(event) {
   saveAndSyncState({
     chatMessages: [...state.chatMessages, newMsg],
     desktopDraftMsg: '',
+    agentLiveActivity: 'Te acaba de responder en el chat',
     mobileScreen: 'P09'
   });
-}
-
-// Nueva pregunta o finalizar atención
-function startAnotherQuestion() {
-  dispatchCloudEvent({
-    type: 'NEW_INQUIRY'
-  });
-
-  saveAndSyncState({
-    mobileScreen: 'P03',
-    desktopScreen: 'A03'
-  });
+  showLiveToast('Respuesta enviada al celular de la visitante', '✓');
 }
 
 function finishSessionBothSides() {
@@ -2288,9 +2628,13 @@ function finishSessionBothSides() {
 
   saveAndSyncState({
     isLinked: false,
+    mobileFlowModal: null,
+    visitorLiveActivity: 'Atención finalizada',
+    agentLiveActivity: 'Atención finalizada',
     desktopScreen: 'A08',
     mobileScreen: 'P10'
   });
+  showLiveToast('Atención finalizada correctamente', '✅');
 }
 
 function resetToNewSession() {
@@ -2300,6 +2644,9 @@ function resetToNewSession() {
 
   saveAndSyncState({
     isLinked: false,
+    mobileFlowModal: null,
+    visitorLiveActivity: 'En pantalla de bienvenida',
+    agentLiveActivity: 'Esperando vinculación por PIN',
     desktopScreen: 'A01',
     mobileScreen: 'P01',
     enteredPin: String(state.sessionPin || '4829').split(''),
@@ -2313,12 +2660,10 @@ function resetToNewSession() {
 // ============================================================================
 
 function renderApp() {
-  // Actualizar botones de modo en la barra superior
   document.querySelectorAll('[data-view-mode]').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-view-mode') === state.viewMode);
   });
 
-  // Actualizar estado del PIN y conexión en la barra superior
   const topPinBadge = document.getElementById('sim-pin-status');
   if (topPinBadge) {
     const dotClass = state.isLinked ? 'connected' : (netStatus.cloudConnected ? 'ready' : '');
@@ -2334,7 +2679,6 @@ function renderApp() {
     `;
   }
 
-  // Sincronizar selectores rápidos de las 26 pantallas
   const desktopSelect = document.getElementById('desktop-screen-select');
   if (desktopSelect && desktopSelect.value !== state.desktopScreen) {
     desktopSelect.value = state.desktopScreen;
@@ -2344,7 +2688,6 @@ function renderApp() {
     mobileSelect.value = state.mobileScreen;
   }
 
-  // Contenedor principal (Split / Solo PC / Solo Celular)
   const workspace = document.getElementById('workspace-container');
   if (workspace) {
     workspace.className = 'workspace-container';
@@ -2352,7 +2695,6 @@ function renderApp() {
     if (state.viewMode === 'mobile') workspace.classList.add('mode-mobile');
   }
 
-  // Renderizar ambos paneles
   const desktopContainer = document.getElementById('desktop-pane');
   if (desktopContainer) {
     desktopContainer.innerHTML = renderDesktopPane();
@@ -2363,7 +2705,6 @@ function renderApp() {
     mobileContainer.innerHTML = renderMobilePane();
   }
 
-  // Auto-scroll en contenedores de chat
   const dChat = document.getElementById('desktop-chat-scroll');
   if (dChat) dChat.scrollTop = dChat.scrollHeight;
   const mChat = document.getElementById('mobile-chat-scroll');
@@ -2382,7 +2723,6 @@ function escapeAttr(str) {
   return String(str || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// Inicialización al cargar el DOM
 window.addEventListener('DOMContentLoaded', () => {
   setupLocalRealtimeSync();
   startVideoSimulationTicker();

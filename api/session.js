@@ -158,3 +158,4 @@ module.exports = async function handler(req, res) {
 
   return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
 };
+
