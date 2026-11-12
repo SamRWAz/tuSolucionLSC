@@ -409,11 +409,24 @@ function processIncomingCloudEvent(ev) {
   switch (ev.type) {
     case 'LINK_REQUEST':
       if (window.APP_FIXED_ROLE !== 'desktop' && ev.pin === state.sessionPin) {
+        const isFreshSession = !state.isLinked || ['P01', 'P02', 'E04'].includes(state.mobileScreen);
+        const resetFields = isFreshSession ? {
+          sentVideosHistory: [],
+          queuedQuestions: [],
+          chatMessages: [],
+          waitingForVideo: false,
+          mobileDraftMsg: '',
+          desktopDraftMsg: '',
+          videoCurrentTime: 0,
+          mobileFlowModal: null
+        } : {};
+
         saveAndSyncState({
+          ...resetFields,
           isLinked: true,
           agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
           visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
-          mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+          mobileScreen: isFreshSession ? 'P03' : state.mobileScreen
         });
         dispatchCloudEvent({
           type: 'LINK_ACK',
@@ -421,13 +434,13 @@ function processIncomingCloudEvent(ev) {
         }, state.sessionPin);
         showLiveToast(`¡Andrés se conectó con el PIN ${state.sessionPin}!`, '✅');
 
-        if (state.mobileScreen === 'P06') {
+        if (!isFreshSession && state.mobileScreen === 'P06') {
           dispatchCloudEvent({
             type: 'VISITOR_QUESTION',
             categoryId: state.selectedCategoryId,
             question: state.selectedQuestion
           });
-        } else if (state.mobileScreen === 'P09') {
+        } else if (!isFreshSession && state.mobileScreen === 'P09') {
           dispatchCloudEvent({
             type: 'START_DIRECT_CHAT',
             chatMessages: state.chatMessages
@@ -446,14 +459,27 @@ function processIncomingCloudEvent(ev) {
         pinVerifyPollInterval = null;
       }
       if (netStatus.isLinkingPin || !state.isLinked) {
+        const isFreshDesktop = !state.isLinked || ['A01', 'A02', 'AE01'].includes(state.desktopScreen);
+        const resetFields = isFreshDesktop ? {
+          sentVideosHistory: [],
+          queuedQuestions: [],
+          chatMessages: [],
+          waitingForVideo: false,
+          mobileDraftMsg: '',
+          desktopDraftMsg: '',
+          videoCurrentTime: 0,
+          mobileFlowModal: null
+        } : {};
+
         netStatus.isLinkingPin = false;
         showLiveToast(`¡Dispositivo vinculado con PIN ${ev.pin || state.sessionPin}!`, '✅');
         saveAndSyncState({
+          ...resetFields,
           sessionPin: ev.pin || state.sessionPin,
           isLinked: true,
           agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
           visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
-          desktopScreen: (state.desktopScreen === 'A01' || state.desktopScreen === 'A02' || state.desktopScreen === 'AE01') ? 'A03' : state.desktopScreen,
+          desktopScreen: isFreshDesktop ? 'A03' : state.desktopScreen,
           mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
         });
       }
@@ -471,6 +497,10 @@ function processIncomingCloudEvent(ev) {
       netStatus.isLinkingPin = false;
       showLiveToast(`¡Conexión establecida con el PIN ${ev.pin || state.sessionPin}!`, '✅');
       saveAndSyncState({
+        sentVideosHistory: !state.isLinked ? [] : state.sentVideosHistory,
+        queuedQuestions: !state.isLinked ? [] : state.queuedQuestions,
+        chatMessages: !state.isLinked ? [] : state.chatMessages,
+        waitingForVideo: !state.isLinked ? false : state.waitingForVideo,
         sessionPin: ev.pin || state.sessionPin,
         isLinked: true,
         agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
@@ -2632,6 +2662,14 @@ async function attemptPinLink() {
     state.sessionPin = entered;
     subscribeToPinRoom(entered);
     saveAndSyncState({
+      sentVideosHistory: [],
+      queuedQuestions: [],
+      chatMessages: [],
+      waitingForVideo: false,
+      mobileDraftMsg: '',
+      desktopDraftMsg: '',
+      videoCurrentTime: 0,
+      mobileFlowModal: null,
       sessionPin: entered,
       isLinked: true,
       visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
@@ -3369,6 +3407,20 @@ function downloadConsultationRecord() {
       writeWrapped(`[${m.time}] ${author}:`, 9.5, true, authorColor, 4, 13);
       writeWrapped(m.text, 10.5, false, [31, 26, 78], 12, 15);
       y += 4;
+    });
+  }
+
+  const queued = state.queuedQuestions || [];
+  if (queued.length > 0) {
+    y += 10;
+    ensureSpace(46);
+    doc.setFillColor(240, 238, 251);
+    doc.roundedRect(margin, y - 16, maxWidth, 26, 6, 6, 'F');
+    writeWrapped('3. PREGUNTAS DEJADAS EN COLA', 11.5, true, [81, 48, 217], 8, 18);
+    y += 6;
+    queued.forEach((q, idx) => {
+      ensureSpace(32);
+      writeWrapped(`${idx + 1}. [${q.categoryName}] ${q.question} (${q.time || ''})`, 10.5, false, [31, 26, 78], 8, 15);
     });
   }
 
