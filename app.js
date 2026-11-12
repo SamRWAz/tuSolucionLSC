@@ -535,9 +535,12 @@ function processIncomingCloudEvent(ev) {
       const vId = ev.videoId || state.selectedCategoryId;
       const cId = ev.categoryId || state.selectedCategoryId;
       const qText = ev.question || state.selectedQuestion;
-      const record = buildSentVideoRecord(vId, cId, qText);
-      const nextHistory = [...(state.sentVideosHistory || []), record];
       const isBrowsingExtra = ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
+      const record = buildSentVideoRecord(vId, cId, qText, {
+        id: ev.recordId,
+        watched: !isBrowsingExtra
+      });
+      const nextHistory = [...(state.sentVideosHistory || []), record];
 
       if (isBrowsingExtra) {
         showLiveToast('🎬 ¡Andrés te envió el video de tu consulta! Toca "Ver video" arriba.', '🎬');
@@ -546,12 +549,6 @@ function processIncomingCloudEvent(ev) {
           waitingForVideo: false,
           selectedVideoId: vId,
           sentVideosHistory: nextHistory,
-          incomingVideoAlert: {
-            videoId: vId,
-            categoryId: cId,
-            question: qText,
-            videoTitle: record.videoTitle
-          },
           agentLiveActivity: 'Te envió el video en LSC · Listo para verlo',
           visitorLiveActivity: 'Video recibido · Buscando pregunta extra'
         });
@@ -560,7 +557,6 @@ function processIncomingCloudEvent(ev) {
         saveAndSyncState({
           isLinked: true,
           waitingForVideo: false,
-          incomingVideoAlert: null,
           selectedVideoId: vId,
           selectedCategoryId: cId,
           selectedQuestion: qText,
@@ -578,11 +574,25 @@ function processIncomingCloudEvent(ev) {
 
     case 'QUEUE_UPDATE':
       if (window.APP_FIXED_ROLE === 'desktop' || state.viewMode === 'split') {
-        if (ev.count > 0) {
-          showLiveToast(`Patricia dejó ${ev.count} pregunta(s) extra en cola mientras espera.`, '📋');
+        const incomingQueue = Array.isArray(ev.queuedQuestions) ? ev.queuedQuestions : state.queuedQuestions;
+        if (ev.notify && incomingQueue.length > 0) {
+          showLiveToast(`Patricia dejó ${incomingQueue.length} pregunta(s) extra en cola mientras espera.`, '📋');
         }
         saveAndSyncState({
+          queuedQuestions: incomingQueue,
           visitorLiveActivity: ev.visitorLiveActivity || state.visitorLiveActivity
+        }, false);
+      }
+      break;
+
+    case 'VIDEO_WATCHED':
+      if (window.APP_FIXED_ROLE === 'desktop' || state.viewMode === 'split') {
+        const updatedHistory = (state.sentVideosHistory || []).map(v =>
+          v.id === ev.recordId ? { ...v, watched: true } : v
+        );
+        saveAndSyncState({
+          sentVideosHistory: updatedHistory,
+          visitorLiveActivity: 'Viendo el video LSC enviado'
         }, false);
       }
       break;
@@ -996,8 +1006,40 @@ function renderDesktopScreenContent() {
     // ------------------------------------------------------------------------
     // A03 · Esperando consulta de la persona visitante
     // ------------------------------------------------------------------------
+function renderDesktopQueueBanner() {
+  const queued = state.queuedQuestions || [];
+  const unwatched = (state.sentVideosHistory || []).filter(v => !v.watched);
+  if (queued.length === 0 && unwatched.length === 0) return '';
+
+  return `
+    <div style="background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:12px 16px;margin-bottom:18px;display:flex;flex-direction:column;gap:8px;text-align:left;">
+      ${unwatched.length > 0 ? `
+        <div style="font-size:12.5px;font-weight:700;color:var(--teal-dark);display:flex;align-items:center;gap:6px;">
+          <span>🎬</span>
+          <span>Patricia tiene ${unwatched.length} video(s) enviado(s) pendiente(s) por reproducir en su bandeja.</span>
+        </div>
+      ` : ''}
+      ${queued.length > 0 ? `
+        <div>
+          <div style="font-size:12.5px;font-weight:800;color:var(--navy-dark);margin-bottom:6px;">
+            📋 Preguntas en cola de Patricia (${queued.length}):
+          </div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            ${queued.map((item, idx) => `
+              <div style="font-size:12.5px;color:var(--text-muted);background:var(--white);padding:6px 10px;border-radius:10px;border:1px solid var(--border-light);">
+                <strong>${idx + 1}. [${escapeHtml(item.categoryName)}]</strong> ${escapeHtml(item.question)}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
     case 'A03':
       return `
+        ${renderDesktopQueueBanner()}
         <div class="a03-waiting-box">
           <div class="dots-pill">
             <span></span><span></span><span></span>
@@ -1033,6 +1075,7 @@ function renderDesktopScreenContent() {
     // ------------------------------------------------------------------------
     case 'A04':
       return `
+        ${renderDesktopQueueBanner()}
         <div class="question-header-card">
           <div class="question-badges-row">
             <span class="pill-tag navy" style="margin-bottom:0;">NUEVA PREGUNTA RECIBIDA</span>
@@ -1275,6 +1318,7 @@ function renderDesktopScreenContent() {
     case 'A07':
       return `
         <div class="desktop-center-card" style="max-width:650px;">
+          ${renderDesktopQueueBanner()}
           <div class="status-circle teal">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="20 6 9 17 4 12"/>
@@ -1449,23 +1493,44 @@ function renderMobileLiveStatusStrip() {
   const isVideoReady = state.desktopScreen === 'A07' || state.mobileScreen === 'P07';
   const toneClass = isVideoReady ? 'tone-teal' : '';
   const qCount = (state.queuedQuestions || []).length;
+  const allVideos = state.sentVideosHistory || [];
+  const unwatchedVideos = allVideos.filter(v => !v.watched);
 
-  const incomingVideoBanner = state.incomingVideoAlert ? `
+  const incomingVideoBanner = (unwatchedVideos.length > 0 && state.mobileScreen !== 'P07') ? `
     <div style="background:var(--teal-light);border-bottom:2px solid var(--teal-primary);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
       <div style="font-size:12px;font-weight:800;color:var(--teal-dark);line-height:1.3;">
-        🎬 ¡Andrés te envió el video!<br>
-        <span style="font-weight:600;font-size:11px;">${escapeHtml(state.incomingVideoAlert.videoTitle)}</span>
+        ${unwatchedVideos.length === 1
+          ? `🎬 ¡Andrés te envió un video!<br><span style="font-weight:600;font-size:11px;">${escapeHtml(unwatchedVideos[0].videoTitle)}</span>`
+          : `🎬 Tienes ${unwatchedVideos.length} videos nuevos de Andrés<br><span style="font-weight:600;font-size:11px;">Toca para verlos sin perder tu avance</span>`
+        }
       </div>
-      <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openIncomingVideoNow()">
-        ▶ Ver video
-      </button>
+      ${unwatchedVideos.length === 1 ? `
+        <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openReceivedVideoById('${escapeAttr(unwatchedVideos[0].id)}')">
+          ▶ Ver video
+        </button>
+      ` : `
+        <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openVideosInboxModal()">
+          ▶ Ver (${unwatchedVideos.length})
+        </button>
+      `}
     </div>
   ` : '';
 
-  const waitingBanner = (state.waitingForVideo && state.mobileScreen !== 'P06') ? `
+  const waitingBanner = ((state.waitingForVideo && state.mobileScreen !== 'P06') || (allVideos.length > 0 && state.mobileScreen !== 'P07' && unwatchedVideos.length === 0)) ? `
     <div style="background:var(--purple-light);border-bottom:1px solid var(--border-light);padding:7px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--navy-dark);font-weight:700;">
-      <span>🕒 Esperando video anterior${qCount > 0 ? ` · ${qCount} en cola` : ''}</span>
-      <button class="link-underline-btn" style="font-size:11.5px;" onclick="goToMobile('P06')">Ver espera</button>
+      <span>
+        ${state.waitingForVideo && state.mobileScreen !== 'P06'
+          ? `🕒 Esperando video${qCount > 0 ? ` · ${qCount} en cola` : ''}`
+          : `🎬 ${allVideos.length} video(s) recibido(s)`}
+      </span>
+      <div style="display:flex;align-items:center;gap:10px;">
+        ${allVideos.length > 0 ? `
+          <button class="link-underline-btn" style="font-size:11.5px;" onclick="openVideosInboxModal()">Mis videos (${allVideos.length})</button>
+        ` : ''}
+        ${state.waitingForVideo && state.mobileScreen !== 'P06' ? `
+          <button class="link-underline-btn" style="font-size:11.5px;" onclick="goToMobile('P06')">Ver espera</button>
+        ` : ''}
+      </div>
     </div>
   ` : '';
 
@@ -2364,6 +2429,50 @@ function renderMobileFlowModalIfActive() {
     `;
   }
 
+  // Modal 3: Bandeja de videos recibidos de Andrés (para no perder ningún video)
+  if (state.mobileFlowModal === 'videos-inbox') {
+    const videos = [...(state.sentVideosHistory || [])].reverse();
+    return `
+      <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
+        <div class="phone-modal-sheet" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto;text-align:left;">
+          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px;">
+            <h3 style="margin:0;font-size:18px;">🎬 Videos recibidos (${videos.length})</h3>
+            <button style="background:none;border:none;font-size:18px;font-weight:800;color:var(--text-muted);cursor:pointer;" onclick="closeMobileFlowModal()">✕</button>
+          </div>
+          <p style="margin-top:0;margin-bottom:12px;font-size:13px;">
+            Aquí quedan guardados todos los videos en LSC que Andrés te ha enviado en esta sesión:
+          </p>
+
+          <div style="display:flex;flex-direction:column;gap:10px;width:100%;">
+            ${videos.length === 0 ? `
+              <div style="font-size:13px;color:var(--text-muted);text-align:center;padding:16px;">
+                Aún no has recibido videos en esta sesión.
+              </div>
+            ` : videos.map(v => `
+              <button class="choice-card-btn ${v.watched ? 'secondary' : ''}" onclick="openReceivedVideoById('${escapeAttr(v.id)}')" style="padding:12px 14px;">
+                <div style="flex:1;">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+                    <span style="font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:999px;background:${v.watched ? 'var(--purple-light)' : 'var(--teal-primary)'};color:${v.watched ? 'var(--navy-dark)' : 'var(--white)'};">
+                      ${v.watched ? '✓ Visto' : 'NUEVO'}
+                    </span>
+                    <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(v.time || '')}</span>
+                  </div>
+                  <span class="choice-card-title" style="font-size:14px;">${escapeHtml(v.videoTitle)}</span>
+                  <span class="choice-card-sub" style="font-size:12px;">«${escapeHtml(v.question)}»</span>
+                </div>
+                <span style="font-size:18px;color:var(--purple-primary);font-weight:800;">▶</span>
+              </button>
+            `).join('')}
+          </div>
+
+          <button class="link-underline-btn" style="font-size:14px;margin-top:12px;align-self:center;" onclick="closeMobileFlowModal()">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
   return '';
 }
 
@@ -2677,7 +2786,6 @@ function sendQuestionFromMobileToDesktop() {
   saveAndSyncState({
     isLinked: true,
     waitingForVideo: true,
-    incomingVideoAlert: null,
     selectedVideoId: state.selectedCategoryId,
     visitorLiveActivity: 'Esperando tu respuesta en video LSC',
     agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
@@ -2714,7 +2822,8 @@ function queueExtraQuestionFromMobile() {
 
   dispatchCloudEvent({
     type: 'QUEUE_UPDATE',
-    count: nextQueue.length,
+    queuedQuestions: nextQueue,
+    notify: true,
     visitorLiveActivity: activityText
   });
 
@@ -2729,22 +2838,41 @@ function queueExtraQuestionFromMobile() {
 
 function removeQueuedQuestion(id) {
   const nextQueue = (state.queuedQuestions || []).filter(item => item.id !== id);
+  dispatchCloudEvent({
+    type: 'QUEUE_UPDATE',
+    queuedQuestions: nextQueue,
+    notify: false
+  });
   saveAndSyncState({ queuedQuestions: nextQueue });
   showLiveToast('Pregunta quitada de la cola', '🗑️');
 }
 
-function openIncomingVideoNow() {
-  const alertInfo = state.incomingVideoAlert;
-  if (!alertInfo) {
+function openVideosInboxModal() {
+  saveAndSyncState({ mobileFlowModal: 'videos-inbox' }, false);
+}
+
+function openReceivedVideoById(recordId) {
+  const history = state.sentVideosHistory || [];
+  const target = history.find(v => v.id === recordId);
+  if (!target) {
     goToMobile('P07');
     return;
   }
+
+  const nextHistory = history.map(v =>
+    v.id === recordId ? { ...v, watched: true } : v
+  );
+
+  dispatchCloudEvent({
+    type: 'VIDEO_WATCHED',
+    recordId
+  });
+
   saveAndSyncState({
-    selectedVideoId: alertInfo.videoId,
-    selectedCategoryId: alertInfo.categoryId,
-    selectedQuestion: alertInfo.question,
-    incomingVideoAlert: null,
-    waitingForVideo: false,
+    sentVideosHistory: nextHistory,
+    selectedVideoId: target.videoId,
+    selectedCategoryId: target.categoryId || target.videoId,
+    selectedQuestion: target.question,
     mobileScreen: 'P07',
     mobileFlowModal: null,
     videoPlaying: true,
@@ -2763,11 +2891,15 @@ function sendNextQueuedQuestion() {
     categoryId: nextItem.categoryId,
     question: nextItem.question
   });
+  dispatchCloudEvent({
+    type: 'QUEUE_UPDATE',
+    queuedQuestions: restQueue,
+    notify: false
+  });
 
   saveAndSyncState({
     isLinked: true,
     waitingForVideo: true,
-    incomingVideoAlert: null,
     selectedCategoryId: nextItem.categoryId,
     selectedVideoId: nextItem.categoryId,
     selectedQuestion: nextItem.question,
@@ -2854,12 +2986,13 @@ function toggleDesktopPreviewPlay() {
   saveAndSyncState({ desktopPreviewPlaying: !state.desktopPreviewPlaying }, false);
 }
 
-function buildSentVideoRecord(videoId, categoryId, question) {
+function buildSentVideoRecord(videoId, categoryId, question, opts = {}) {
   const videoObj = CATEGORIES_DATA[videoId] || CATEGORIES_DATA.requisitos;
   const catObj = CATEGORIES_DATA[categoryId] || videoObj;
   return {
-    id: 'vid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    id: opts.id || ('vid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
     videoId: videoObj.id,
+    categoryId: catObj.id,
     categoryName: catObj.name,
     question: question || state.selectedQuestion,
     videoTitle: videoObj.videoTitle,
@@ -2867,17 +3000,21 @@ function buildSentVideoRecord(videoId, categoryId, question) {
     videoDesc: videoObj.videoDesc,
     summarySteps: [...videoObj.summarySteps],
     lscCaptions: [...videoObj.lscCaptions],
+    watched: Boolean(opts.watched),
     time: getCurrentTimeFormatted()
   };
 }
 
 function sendVideoToVisitorPhone() {
-  const record = buildSentVideoRecord(state.selectedVideoId, state.selectedCategoryId, state.selectedQuestion);
-  const nextHistory = [...(state.sentVideosHistory || []), record];
   const isBrowsingExtraSplit = state.viewMode === 'split' && ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
+  const record = buildSentVideoRecord(state.selectedVideoId, state.selectedCategoryId, state.selectedQuestion, {
+    watched: !isBrowsingExtraSplit
+  });
+  const nextHistory = [...(state.sentVideosHistory || []), record];
 
   dispatchCloudEvent({
     type: 'SEND_LSC_VIDEO',
+    recordId: record.id,
     videoId: state.selectedVideoId,
     categoryId: state.selectedCategoryId,
     question: state.selectedQuestion
@@ -2888,12 +3025,6 @@ function sendVideoToVisitorPhone() {
     mobileScreen: isBrowsingExtraSplit ? state.mobileScreen : 'P07',
     mobileFlowModal: null,
     waitingForVideo: false,
-    incomingVideoAlert: isBrowsingExtraSplit ? {
-      videoId: state.selectedVideoId,
-      categoryId: state.selectedCategoryId,
-      question: state.selectedQuestion,
-      videoTitle: record.videoTitle
-    } : null,
     sentVideosHistory: nextHistory,
     videoPlaying: true,
     videoCurrentTime: 0,
