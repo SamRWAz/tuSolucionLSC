@@ -125,6 +125,14 @@ const DEFAULT_STATE = {
 
 let isDownloadingVideo = false;
 
+function generateUniquePin() {
+  let pin = '';
+  do {
+    pin = String(Math.floor(1000 + Math.random() * 9000));
+  } while (pin === '4805' || pin === '0000');
+  return pin;
+}
+
 let state = loadState();
 let syncChannel = null;
 let videoTimerInterval = null;
@@ -135,6 +143,8 @@ let mqttClient = null;
 let currentSubscribedPin = null;
 let apiPollInterval = null;
 let lastPolledTimestamp = Date.now() - 10000;
+let pinLinkTimeout = null;
+let pinVerifyPollInterval = null;
 
 const netStatus = {
   cloudConnected: false,
@@ -145,6 +155,25 @@ const urlParams = new URLSearchParams(window.location.search);
 const fixedRole = window.APP_FIXED_ROLE || urlParams.get('mode');
 if (fixedRole === 'desktop' || fixedRole === 'mobile' || fixedRole === 'split') {
   state.viewMode = fixedRole;
+}
+
+if (fixedRole === 'mobile' || fixedRole === 'split') {
+  let tabPin = null;
+  try {
+    tabPin = sessionStorage.getItem('tuSolucionLSC_tab_pin');
+  } catch (e) {}
+  if (!tabPin || !/^\d{4}$/.test(tabPin) || tabPin === '4805' || tabPin === '0000') {
+    tabPin = generateUniquePin();
+    try {
+      sessionStorage.setItem('tuSolucionLSC_tab_pin', tabPin);
+    } catch (e) {}
+  }
+  state.sessionPin = tabPin;
+  if (fixedRole === 'split') {
+    state.enteredPin = tabPin.split('');
+  }
+} else if (fixedRole === 'desktop' && !state.isLinked) {
+  state.enteredPin = ['', '', '', ''];
 }
 
 function loadState() {
@@ -375,7 +404,68 @@ function processIncomingCloudEvent(ev) {
   processedEventIds.add(ev.eventId);
 
   switch (ev.type) {
+    case 'LINK_REQUEST':
+      if (window.APP_FIXED_ROLE !== 'desktop' && ev.pin === state.sessionPin) {
+        saveAndSyncState({
+          isLinked: true,
+          agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
+          visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
+          mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+        });
+        dispatchCloudEvent({
+          type: 'LINK_ACK',
+          pin: state.sessionPin
+        }, state.sessionPin);
+        showLiveToast(`¡Andrés se conectó con el PIN ${state.sessionPin}!`, '✅');
+
+        if (state.mobileScreen === 'P06') {
+          dispatchCloudEvent({
+            type: 'VISITOR_QUESTION',
+            categoryId: state.selectedCategoryId,
+            question: state.selectedQuestion
+          });
+        } else if (state.mobileScreen === 'P09') {
+          dispatchCloudEvent({
+            type: 'START_DIRECT_CHAT',
+            chatMessages: state.chatMessages
+          });
+        }
+      }
+      break;
+
+    case 'LINK_ACK':
+      if (pinLinkTimeout) {
+        clearTimeout(pinLinkTimeout);
+        pinLinkTimeout = null;
+      }
+      if (pinVerifyPollInterval) {
+        clearInterval(pinVerifyPollInterval);
+        pinVerifyPollInterval = null;
+      }
+      if (netStatus.isLinkingPin || !state.isLinked) {
+        netStatus.isLinkingPin = false;
+        showLiveToast(`¡Dispositivo vinculado con PIN ${ev.pin || state.sessionPin}!`, '✅');
+        saveAndSyncState({
+          sessionPin: ev.pin || state.sessionPin,
+          isLinked: true,
+          agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
+          visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
+          desktopScreen: (state.desktopScreen === 'A01' || state.desktopScreen === 'A02' || state.desktopScreen === 'AE01') ? 'A03' : state.desktopScreen,
+          mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+        });
+      }
+      break;
+
     case 'LINK_SUCCESS':
+      if (pinLinkTimeout) {
+        clearTimeout(pinLinkTimeout);
+        pinLinkTimeout = null;
+      }
+      if (pinVerifyPollInterval) {
+        clearInterval(pinVerifyPollInterval);
+        pinVerifyPollInterval = null;
+      }
+      netStatus.isLinkingPin = false;
       showLiveToast(`¡Conexión establecida con el PIN ${ev.pin || state.sessionPin}!`, '✅');
       saveAndSyncState({
         sessionPin: ev.pin || state.sessionPin,
@@ -1784,6 +1874,10 @@ function renderMobileScreenContent() {
               Cuando Andrés envíe el video, se reproducirá automáticamente aquí.
             </span>
           </div>
+
+          <button class="btn-outline" style="width:100%;margin-top:12px;justify-content:center;" onclick="promptNextQuestionChoiceModal()">
+            ← Cancelar o cambiar pregunta
+          </button>
         </div>
       `;
 
@@ -2309,30 +2403,63 @@ async function attemptPinLink() {
     return;
   }
 
+  if (state.viewMode === 'split' && entered === state.sessionPin) {
+    state.sessionPin = entered;
+    subscribeToPinRoom(entered);
+    saveAndSyncState({
+      sessionPin: entered,
+      isLinked: true,
+      visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
+      agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
+      desktopScreen: 'A03',
+      mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
+    });
+    showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`, '✅');
+    return;
+  }
+
+  if (pinLinkTimeout) {
+    clearTimeout(pinLinkTimeout);
+    pinLinkTimeout = null;
+  }
+  if (pinVerifyPollInterval) {
+    clearInterval(pinVerifyPollInterval);
+    pinVerifyPollInterval = null;
+  }
+
   netStatus.isLinkingPin = true;
   renderApp();
 
   state.sessionPin = entered;
   subscribeToPinRoom(entered);
-  lastPolledTimestamp = Date.now() - 60000;
+  lastPolledTimestamp = Date.now() - 10000;
 
   await dispatchCloudEvent({
-    type: 'LINK_SUCCESS',
+    type: 'LINK_REQUEST',
     pin: entered
   }, entered);
 
-  netStatus.isLinkingPin = false;
-  saveAndSyncState({
-    sessionPin: entered,
-    isLinked: true,
-    visitorLiveActivity: 'Sesión vinculada · Explorando categorías (Paso 1 de 3)',
-    agentLiveActivity: 'Conectado · Esperando que elijas y envíes tu pregunta',
-    desktopScreen: 'A03',
-    mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
-  });
-
-  showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`, '✅');
   pollServerEvents();
+  pinVerifyPollInterval = setInterval(() => {
+    if (netStatus.isLinkingPin) {
+      pollServerEvents();
+    } else if (pinVerifyPollInterval) {
+      clearInterval(pinVerifyPollInterval);
+      pinVerifyPollInterval = null;
+    }
+  }, 500);
+
+  pinLinkTimeout = setTimeout(() => {
+    if (netStatus.isLinkingPin) {
+      netStatus.isLinkingPin = false;
+      if (pinVerifyPollInterval) {
+        clearInterval(pinVerifyPollInterval);
+        pinVerifyPollInterval = null;
+      }
+      pinLinkTimeout = null;
+      simulateInvalidPin(entered.split(''));
+    }
+  }, 3800);
 }
 
 function simulateInvalidPin(customDigits) {
@@ -2699,18 +2826,51 @@ function finishSessionBothSides() {
 }
 
 function resetToNewSession() {
+  const oldPin = state.sessionPin;
   dispatchCloudEvent({
     type: 'RESET_SESSION'
-  });
+  }, oldPin);
+
+  if (oldPin) {
+    fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'CLEAR_ROOM', pin: oldPin })
+    }).catch(() => {});
+  }
+
+  let newPin = oldPin;
+  if (window.APP_FIXED_ROLE !== 'desktop') {
+    newPin = generateUniquePin();
+    try {
+      sessionStorage.setItem('tuSolucionLSC_tab_pin', newPin);
+    } catch (e) {}
+    subscribeToPinRoom(newPin);
+    registerPinOnServer(newPin);
+  }
+
+  if (pinLinkTimeout) {
+    clearTimeout(pinLinkTimeout);
+    pinLinkTimeout = null;
+  }
+  if (pinVerifyPollInterval) {
+    clearInterval(pinVerifyPollInterval);
+    pinVerifyPollInterval = null;
+  }
+  netStatus.isLinkingPin = false;
 
   saveAndSyncState({
+    sessionPin: newPin,
     isLinked: false,
     mobileFlowModal: null,
     visitorLiveActivity: 'En pantalla de bienvenida',
     agentLiveActivity: 'Esperando vinculación por PIN',
     desktopScreen: 'A01',
     mobileScreen: 'P01',
-    enteredPin: String(state.sessionPin || '4829').split(''),
+    enteredPin: state.viewMode === 'split' ? newPin.split('') : ['', '', '', ''],
+    selectedQuestion: null,
+    mobileDraftMsg: '',
+    desktopDraftMsg: '',
     videoCurrentTime: 0,
     sentVideosHistory: [],
     chatMessages: []
@@ -3117,6 +3277,16 @@ function renderApp() {
   if (dChat) dChat.scrollTop = dChat.scrollHeight;
   const mChat = document.getElementById('mobile-chat-scroll');
   if (mChat) mChat.scrollTop = mChat.scrollHeight;
+
+  if (state.viewMode === 'desktop' || window.APP_FIXED_ROLE === 'desktop') {
+    if (state.desktopScreen === 'A04') {
+      document.title = '(1) Nueva pregunta · tuSoluciónLSC';
+    } else if (state.desktopScreen === 'A09') {
+      document.title = '(1) Solicitud de chat · tuSoluciónLSC';
+    } else {
+      document.title = 'tuSoluciónLSC — Panel de Andrés';
+    }
+  }
 }
 
 function escapeHtml(str) {

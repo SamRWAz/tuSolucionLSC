@@ -100,6 +100,17 @@ module.exports = async function handler(req, res) {
         });
       }
 
+      if (action === 'CLEAR_ROOM') {
+        room.isLinked = false;
+        room.events = [];
+        return res.status(200).json({
+          ok: true,
+          pin,
+          cleared: true,
+          serverTime: Date.now()
+        });
+      }
+
       if (action === 'LINK_PIN') {
         room.isLinked = true;
         const linkEvent = {
@@ -129,10 +140,13 @@ module.exports = async function handler(req, res) {
           pin
         };
 
-        if (newEvent.type === 'LINK_SUCCESS') {
+        if (newEvent.type === 'LINK_SUCCESS' || newEvent.type === 'LINK_ACK') {
           room.isLinked = true;
-        } else if (newEvent.type === 'FINISH_SESSION' || newEvent.type === 'RESET_SESSION') {
+        } else if (newEvent.type === 'FINISH_SESSION') {
           room.isLinked = false;
+        } else if (newEvent.type === 'RESET_SESSION') {
+          room.isLinked = false;
+          room.events = [];
         }
 
         // Evitar duplicados en el buffer de eventos
