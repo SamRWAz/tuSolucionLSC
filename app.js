@@ -117,10 +117,13 @@ const DEFAULT_STATE = {
   // Textos de estado bilateral en tiempo real
   visitorLiveActivity: 'En pantalla de bienvenida',
   agentLiveActivity: 'Esperando vinculación por PIN',
+  sentVideosHistory: [],
   chatMessages: [],
   mobileDraftMsg: '',
   desktopDraftMsg: ''
 };
+
+let isDownloadingVideo = false;
 
 let state = loadState();
 let syncChannel = null;
@@ -435,13 +438,20 @@ function processIncomingCloudEvent(ev) {
       });
       break;
 
-    case 'SEND_LSC_VIDEO':
+    case 'SEND_LSC_VIDEO': {
       showLiveToast('¡Andrés te ha enviado el video de respuesta en LSC!', '🎬');
+      const vId = ev.videoId || state.selectedCategoryId;
+      const cId = ev.categoryId || state.selectedCategoryId;
+      const qText = ev.question || state.selectedQuestion;
+      const record = buildSentVideoRecord(vId, cId, qText);
+      const nextHistory = [...(state.sentVideosHistory || []), record];
+
       saveAndSyncState({
         isLinked: true,
-        selectedVideoId: ev.videoId || state.selectedCategoryId,
-        selectedCategoryId: ev.categoryId || state.selectedCategoryId,
-        selectedQuestion: ev.question || state.selectedQuestion,
+        selectedVideoId: vId,
+        selectedCategoryId: cId,
+        selectedQuestion: qText,
+        sentVideosHistory: nextHistory,
         agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
         visitorLiveActivity: 'Reproduciendo el video LSC en su celular',
         mobileScreen: 'P07',
@@ -450,6 +460,7 @@ function processIncomingCloudEvent(ev) {
         videoCurrentTime: 0
       });
       break;
+    }
 
     case 'START_DIRECT_CHAT':
       showLiveToast('La visitante confirmó entrar al chat directo («No encuentro mi pregunta»).', '💬');
@@ -1839,7 +1850,18 @@ function renderMobileScreenContent() {
             </button>
           </div>
 
-          <button class="btn-primary" style="width:100%;padding:16px;margin-top:14px;" onclick="goToMobile('P08')">
+          <button
+            class="btn-outline"
+            id="p07-download-video-btn"
+            style="width:100%;padding:13px;margin-top:12px;font-size:14.5px;"
+            onclick="downloadSimulatedLscVideo()"
+            ${isDownloadingVideo ? 'disabled' : ''}
+          >
+            <span>⬇</span>
+            <span>${isDownloadingVideo ? 'Generando descarga del video...' : 'Descargar video en LSC'}</span>
+          </button>
+
+          <button class="btn-primary" style="width:100%;padding:15px;margin-top:10px;" onclick="goToMobile('P08')">
             Continuar
           </button>
         </div>
@@ -1939,11 +1961,21 @@ function renderMobileScreenContent() {
         </div>
         ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad" style="padding-top:12px;">
-          <h2 style="font-size:21px;font-weight:800;color:var(--navy-dark);margin-bottom:10px;">
-            Chat con Andrés
-          </h2>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+            <h2 style="font-size:21px;font-weight:800;color:var(--navy-dark);margin-bottom:0;">
+              Chat con Andrés
+            </h2>
+            <button
+              class="btn-outline"
+              style="padding:7px 12px;font-size:12px;border-width:1.5px;"
+              onclick="downloadConsultationRecord()"
+              title="Descargar conversación e información de videos recibidos"
+            >
+              📥 Descargar chat
+            </button>
+          </div>
 
-          <div class="p09-chat-container" id="mobile-chat-scroll" style="height:300px;">
+          <div class="p09-chat-container" id="mobile-chat-scroll" style="height:285px;">
             ${state.chatMessages.length === 0 ? `
               <div style="margin:auto;text-align:center;color:var(--text-muted);font-size:13.5px;padding:12px;">
                 Escribe tu pregunta aquí abajo y Andrés la recibirá al instante en su computador.
@@ -2009,7 +2041,7 @@ function renderMobileScreenContent() {
             Gracias por visitar la Universidad Icesi.
           </p>
 
-          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:20px;" onclick="openMiniClip('Despedida en LSC', '0:15', '🤲 ¡Muchas gracias por tu visita a la Universidad Icesi! Siempre bienvenido.')">
+          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:16px;" onclick="openMiniClip('Despedida en LSC', '0:15', '🤲 ¡Muchas gracias por tu visita a la Universidad Icesi! Siempre bienvenido.')">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -2024,6 +2056,14 @@ function renderMobileScreenContent() {
               </div>
             </div>
           </div>
+
+          <button
+            class="btn-outline"
+            style="width:100%;padding:14px;margin-bottom:10px;font-size:14.5px;"
+            onclick="downloadConsultationRecord()"
+          >
+            <span>📥</span> <span>Descargar chat e info de videos</span>
+          </button>
 
           <button class="link-underline-btn" style="font-size:13.5px;" onclick="resetToNewSession()">
             ↻ Iniciar nueva consulta
@@ -2476,7 +2516,27 @@ function toggleDesktopPreviewPlay() {
   saveAndSyncState({ desktopPreviewPlaying: !state.desktopPreviewPlaying }, false);
 }
 
+function buildSentVideoRecord(videoId, categoryId, question) {
+  const videoObj = CATEGORIES_DATA[videoId] || CATEGORIES_DATA.requisitos;
+  const catObj = CATEGORIES_DATA[categoryId] || videoObj;
+  return {
+    id: 'vid-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    videoId: videoObj.id,
+    categoryName: catObj.name,
+    question: question || state.selectedQuestion,
+    videoTitle: videoObj.videoTitle,
+    duration: videoObj.duration,
+    videoDesc: videoObj.videoDesc,
+    summarySteps: [...videoObj.summarySteps],
+    lscCaptions: [...videoObj.lscCaptions],
+    time: getCurrentTimeFormatted()
+  };
+}
+
 function sendVideoToVisitorPhone() {
+  const record = buildSentVideoRecord(state.selectedVideoId, state.selectedCategoryId, state.selectedQuestion);
+  const nextHistory = [...(state.sentVideosHistory || []), record];
+
   dispatchCloudEvent({
     type: 'SEND_LSC_VIDEO',
     videoId: state.selectedVideoId,
@@ -2488,6 +2548,7 @@ function sendVideoToVisitorPhone() {
     desktopScreen: 'A07',
     mobileScreen: 'P07',
     mobileFlowModal: null,
+    sentVideosHistory: nextHistory,
     videoPlaying: true,
     videoCurrentTime: 0,
     desktopPreviewPlaying: false,
@@ -2651,8 +2712,289 @@ function resetToNewSession() {
     mobileScreen: 'P01',
     enteredPin: String(state.sessionPin || '4829').split(''),
     videoCurrentTime: 0,
+    sentVideosHistory: [],
     chatMessages: []
   });
+}
+
+// ============================================================================
+// DESCARGA DE CONVERSACIÓN DEL CHAT + CONTENIDO DE VIDEOS ENVIADOS
+// Y DESCARGA DEL VIDEO SIMULADO EN LSC
+// ============================================================================
+
+function triggerBrowserBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 500);
+}
+
+function downloadConsultationRecord() {
+  const nowStr = new Date().toLocaleString('es-CO');
+  const videos = state.sentVideosHistory || [];
+  const messages = state.chatMessages || [];
+
+  const lines = [
+    '============================================================',
+    '  tuSoluciónLSC — Registro de Consulta (Universidad Icesi)',
+    '============================================================',
+    `Fecha y hora de descarga : ${nowStr}`,
+    `PIN de sesión            : ${state.sessionPin}`,
+    '',
+    '------------------------------------------------------------',
+    '1. VIDEOS EN LSC RECIBIDOS Y CONTENIDO DE LA INFORMACIÓN',
+    '------------------------------------------------------------'
+  ];
+
+  if (videos.length === 0) {
+    lines.push('No se han enviado videos en LSC durante esta sesión todavía.');
+  } else {
+    videos.forEach((v, idx) => {
+      lines.push('');
+      lines.push(`[Video #${idx + 1}] ${v.videoTitle} (Duración: ${v.duration}) · Recibido a las ${v.time}`);
+      lines.push(`Categoría : ${v.categoryName}`);
+      lines.push(`Pregunta  : ${v.question}`);
+      lines.push(`Descripción: ${v.videoDesc}`);
+      lines.push('Resumen en español:');
+      (v.summarySteps || []).forEach(step => lines.push(`  - ${step}`));
+      lines.push('Contenido en Lengua de Señas Colombiana (LSC):');
+      (v.lscCaptions || []).forEach(cap => lines.push(`  • ${cap}`));
+    });
+  }
+
+  lines.push('');
+  lines.push('------------------------------------------------------------');
+  lines.push('2. CONVERSACIÓN DEL CHAT CON ANDRÉS');
+  lines.push('------------------------------------------------------------');
+
+  if (messages.length === 0) {
+    lines.push('No hay mensajes registrados en el chat.');
+  } else {
+    messages.forEach(m => {
+      const author = m.sender === 'visitor' ? 'Visitante (Patricia)' : 'Funcionario (Andrés)';
+      lines.push(`[${m.time}] ${author}: ${m.text}`);
+    });
+  }
+
+  lines.push('');
+  lines.push('============================================================');
+  lines.push('Gracias por utilizar tuSoluciónLSC.');
+
+  const content = lines.join('\r\n');
+  const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
+  triggerBrowserBlobDownload(blob, `tuSolucionLSC-consulta-PIN-${state.sessionPin}.txt`);
+  showLiveToast('Chat e información de videos descargados (.txt)', '📥');
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = String(text || '').split(' ');
+  let line = '';
+  let currentY = y;
+  for (let n = 0; n < words.length; n++) {
+    const testLine = line + words[n] + ' ';
+    const metrics = ctx.measureText(testLine);
+    if (metrics.width > maxWidth && n > 0) {
+      ctx.fillText(line.trim(), x, currentY);
+      line = words[n] + ' ';
+      currentY += lineHeight;
+    } else {
+      line = testLine;
+    }
+  }
+  if (line.trim()) {
+    ctx.fillText(line.trim(), x, currentY);
+    currentY += lineHeight;
+  }
+  return currentY;
+}
+
+function downloadSimulatedVideoHtmlFallback(videoObj, questionText) {
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${escapeHtml(videoObj.videoTitle)} — tuSoluciónLSC</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #F8F7FC; color: #1F1A4E; margin: 0; padding: 24px; }
+  .card { max-width: 520px; margin: 0 auto; background: #FFF; border-radius: 24px; padding: 24px; box-shadow: 0 10px 30px rgba(31,26,78,0.1); }
+  .player { background: linear-gradient(125deg, #5DBFBC 0%, #5130D9 100%); color: #FFF; border-radius: 18px; padding: 28px 20px; text-align: center; margin-bottom: 18px; }
+  .step { background: #F0EEFB; padding: 12px 14px; border-radius: 12px; margin-bottom: 8px; font-weight: 600; font-size: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:12px;font-weight:800;color:#5130D9;margin-bottom:6px;">tuSoluciónLSC · VIDEO DESCARGADO</div>
+    <h2 style="margin:0 0 8px;">${escapeHtml(videoObj.videoTitle)} (${escapeHtml(videoObj.duration)})</h2>
+    <p style="color:#5F5C78;margin:0 0 16px;"><strong>Pregunta:</strong> ${escapeHtml(questionText)}</p>
+    <div class="player">
+      <div style="font-size:38px;margin-bottom:8px;">🤟</div>
+      <div style="font-weight:800;font-size:17px;margin-bottom:10px;">Simulación de Respuesta en LSC</div>
+      ${videoObj.lscCaptions.map(c => `<div style="background:rgba(24,20,64,0.65);padding:8px 12px;border-radius:10px;margin-bottom:6px;font-size:13px;">${escapeHtml(c)}</div>`).join('')}
+    </div>
+    <h3 style="margin:0 0 10px;font-size:16px;">Resumen en español</h3>
+    ${videoObj.summarySteps.map(s => `<div class="step">${escapeHtml(s)}</div>`).join('')}
+  </div>
+</body>
+</html>`;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  triggerBrowserBlobDownload(blob, `${videoObj.id}-LSC-tuSolucionLSC.html`);
+  showLiveToast('Video interactivo descargado en tu dispositivo', '📥');
+}
+
+function downloadSimulatedLscVideo() {
+  if (isDownloadingVideo) return;
+  const videoObj = CATEGORIES_DATA[state.selectedVideoId] || CATEGORIES_DATA.requisitos;
+  const questionText = state.selectedQuestion || '';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 720;
+  canvas.height = 960;
+
+  const canRecord = typeof canvas.captureStream === 'function' && typeof MediaRecorder !== 'undefined';
+  if (!canRecord) {
+    downloadSimulatedVideoHtmlFallback(videoObj, questionText);
+    return;
+  }
+
+  let mimeType = '';
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+    mimeType = 'video/webm;codecs=vp8';
+  } else if (MediaRecorder.isTypeSupported('video/webm')) {
+    mimeType = 'video/webm';
+  } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+    mimeType = 'video/mp4';
+  }
+
+  if (!mimeType) {
+    downloadSimulatedVideoHtmlFallback(videoObj, questionText);
+    return;
+  }
+
+  isDownloadingVideo = true;
+  renderApp();
+
+  try {
+    const stream = canvas.captureStream(24);
+    const recorder = new MediaRecorder(stream, { mimeType });
+    const chunks = [];
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      isDownloadingVideo = false;
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type: mimeType });
+      triggerBrowserBlobDownload(blob, `Video-LSC-${videoObj.id}.${ext}`);
+      showLiveToast(`Video descargado (${videoObj.videoTitle}.${ext})`, '📥');
+      renderApp();
+    };
+
+    const ctx = canvas.getContext('2d');
+    const startTime = performance.now();
+    const durationMs = 2800;
+
+    recorder.start();
+
+    function drawFrame(now) {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+
+      const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      grad.addColorStop(0, '#5DBFBC');
+      grad.addColorStop(1, '#5130D9');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Tarjeta superior con marca y pregunta
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+      ctx.beginPath();
+      ctx.roundRect(40, 44, canvas.width - 80, 210, 24);
+      ctx.fill();
+
+      ctx.fillStyle = '#5130D9';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText('tuSoluciónLSC · Universidad Icesi', 72, 92);
+
+      ctx.fillStyle = '#1F1A4E';
+      ctx.font = 'bold 28px sans-serif';
+      ctx.fillText(videoObj.videoTitle, 72, 134);
+
+      ctx.fillStyle = '#5F5C78';
+      ctx.font = '22px sans-serif';
+      wrapCanvasText(ctx, `Pregunta: ${questionText}`, 72, 178, canvas.width - 144, 30);
+
+      // Círculo central animado de señas LSC
+      const pulse = 1 + 0.08 * Math.sin(elapsed * 0.01);
+      ctx.save();
+      ctx.translate(canvas.width / 2, 430);
+      ctx.scale(pulse, pulse);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 92, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '76px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🤟', 0, 4);
+      ctx.restore();
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+
+      // Subtítulo LSC actual
+      const capIdx = Math.min(
+        videoObj.lscCaptions.length - 1,
+        Math.floor(progress * videoObj.lscCaptions.length)
+      );
+      ctx.fillStyle = 'rgba(24, 20, 64, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(40, 560, canvas.width - 80, 120, 20);
+      ctx.fill();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 24px sans-serif';
+      wrapCanvasText(ctx, videoObj.lscCaptions[capIdx], 68, 608, canvas.width - 136, 32);
+
+      // Resumen en español
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+      ctx.beginPath();
+      ctx.roundRect(40, 704, canvas.width - 80, 210, 20);
+      ctx.fill();
+
+      ctx.fillStyle = '#1F1A4E';
+      ctx.font = 'bold 21px sans-serif';
+      ctx.fillText('Resumen de la información:', 68, 744);
+
+      ctx.fillStyle = '#3E3A5D';
+      ctx.font = '19px sans-serif';
+      let sy = 778;
+      videoObj.summarySteps.forEach(step => {
+        sy = wrapCanvasText(ctx, step, 68, sy, canvas.width - 136, 24) + 6;
+      });
+
+      if (elapsed < durationMs) {
+        requestAnimationFrame(drawFrame);
+      } else {
+        recorder.stop();
+      }
+    }
+
+    requestAnimationFrame(drawFrame);
+  } catch (err) {
+    console.warn('Error grabando video simulado, usando respaldo HTML:', err);
+    isDownloadingVideo = false;
+    renderApp();
+    downloadSimulatedVideoHtmlFallback(videoObj, questionText);
+  }
 }
 
 // ============================================================================
