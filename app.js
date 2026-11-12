@@ -136,6 +136,16 @@ function generateUniquePin() {
   return pin;
 }
 
+const urlParams = new URLSearchParams(window.location.search);
+const fixedRole = window.APP_FIXED_ROLE || urlParams.get('mode');
+
+function getActiveStorageKey() {
+  if (fixedRole === 'desktop' || fixedRole === 'mobile') {
+    return `${STORAGE_KEY}_${fixedRole}`;
+  }
+  return STORAGE_KEY;
+}
+
 let state = loadState();
 let syncChannel = null;
 let videoTimerInterval = null;
@@ -154,8 +164,6 @@ const netStatus = {
   isLinkingPin: false
 };
 
-const urlParams = new URLSearchParams(window.location.search);
-const fixedRole = window.APP_FIXED_ROLE || urlParams.get('mode');
 if (fixedRole === 'desktop' || fixedRole === 'mobile' || fixedRole === 'split') {
   state.viewMode = fixedRole;
 }
@@ -181,7 +189,7 @@ if (fixedRole === 'mobile' || fixedRole === 'split') {
 
 function loadState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getActiveStorageKey());
     if (raw) {
       return { ...DEFAULT_STATE, ...JSON.parse(raw) };
     }
@@ -194,11 +202,11 @@ function loadState() {
 function saveAndSyncState(partial = {}, broadcastLocal = true) {
   state = { ...state, ...partial };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(getActiveStorageKey(), JSON.stringify(state));
   } catch (e) {
     console.warn('Error guardando estado:', e);
   }
-  if (broadcastLocal && syncChannel) {
+  if (broadcastLocal && syncChannel && fixedRole !== 'desktop' && fixedRole !== 'mobile') {
     syncChannel.postMessage({ type: 'STATE_UPDATE', state });
   }
   renderApp();
@@ -721,6 +729,10 @@ function processIncomingCloudEvent(ev) {
 }
 
 function setupLocalRealtimeSync() {
+  if (fixedRole === 'desktop' || fixedRole === 'mobile') {
+    return;
+  }
+
   if ('BroadcastChannel' in window) {
     syncChannel = new BroadcastChannel(CHANNEL_NAME);
     syncChannel.onmessage = (event) => {
