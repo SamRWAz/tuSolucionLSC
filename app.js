@@ -119,6 +119,9 @@ const DEFAULT_STATE = {
   agentLiveActivity: 'Esperando vinculación por PIN',
   sentVideosHistory: [],
   chatMessages: [],
+  waitingForVideo: false,
+  queuedQuestions: [],
+  incomingVideoAlert: null,
   mobileDraftMsg: '',
   desktopDraftMsg: ''
 };
@@ -529,28 +532,60 @@ function processIncomingCloudEvent(ev) {
       break;
 
     case 'SEND_LSC_VIDEO': {
-      showLiveToast('¡Andrés te ha enviado el video de respuesta en LSC!', '🎬');
       const vId = ev.videoId || state.selectedCategoryId;
       const cId = ev.categoryId || state.selectedCategoryId;
       const qText = ev.question || state.selectedQuestion;
       const record = buildSentVideoRecord(vId, cId, qText);
       const nextHistory = [...(state.sentVideosHistory || []), record];
+      const isBrowsingExtra = ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
 
-      saveAndSyncState({
-        isLinked: true,
-        selectedVideoId: vId,
-        selectedCategoryId: cId,
-        selectedQuestion: qText,
-        sentVideosHistory: nextHistory,
-        agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
-        visitorLiveActivity: 'Reproduciendo el video LSC en su celular',
-        mobileScreen: 'P07',
-        mobileFlowModal: null,
-        videoPlaying: true,
-        videoCurrentTime: 0
-      });
+      if (isBrowsingExtra) {
+        showLiveToast('🎬 ¡Andrés te envió el video de tu consulta! Toca "Ver video" arriba.', '🎬');
+        saveAndSyncState({
+          isLinked: true,
+          waitingForVideo: false,
+          selectedVideoId: vId,
+          sentVideosHistory: nextHistory,
+          incomingVideoAlert: {
+            videoId: vId,
+            categoryId: cId,
+            question: qText,
+            videoTitle: record.videoTitle
+          },
+          agentLiveActivity: 'Te envió el video en LSC · Listo para verlo',
+          visitorLiveActivity: 'Video recibido · Buscando pregunta extra'
+        });
+      } else {
+        showLiveToast('¡Andrés te ha enviado el video de respuesta en LSC!', '🎬');
+        saveAndSyncState({
+          isLinked: true,
+          waitingForVideo: false,
+          incomingVideoAlert: null,
+          selectedVideoId: vId,
+          selectedCategoryId: cId,
+          selectedQuestion: qText,
+          sentVideosHistory: nextHistory,
+          agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
+          visitorLiveActivity: 'Reproduciendo el video LSC en su celular',
+          mobileScreen: 'P07',
+          mobileFlowModal: null,
+          videoPlaying: true,
+          videoCurrentTime: 0
+        });
+      }
       break;
     }
+
+    case 'QUEUE_UPDATE':
+      if (window.APP_FIXED_ROLE === 'desktop' || state.viewMode === 'split') {
+        if (ev.count > 0) {
+          showLiveToast(`Patricia dejó ${ev.count} pregunta(s) extra en cola mientras espera.`, '📋');
+        }
+        saveAndSyncState({
+          visitorLiveActivity: ev.visitorLiveActivity || state.visitorLiveActivity
+        }, false);
+      }
+      break;
 
     case 'START_DIRECT_CHAT':
       showLiveToast('La visitante confirmó entrar al chat directo («No encuentro mi pregunta»).', '💬');
@@ -1413,8 +1448,30 @@ function renderMobileLiveStatusStrip() {
 
   const isVideoReady = state.desktopScreen === 'A07' || state.mobileScreen === 'P07';
   const toneClass = isVideoReady ? 'tone-teal' : '';
+  const qCount = (state.queuedQuestions || []).length;
+
+  const incomingVideoBanner = state.incomingVideoAlert ? `
+    <div style="background:var(--teal-light);border-bottom:2px solid var(--teal-primary);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div style="font-size:12px;font-weight:800;color:var(--teal-dark);line-height:1.3;">
+        🎬 ¡Andrés te envió el video!<br>
+        <span style="font-weight:600;font-size:11px;">${escapeHtml(state.incomingVideoAlert.videoTitle)}</span>
+      </div>
+      <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openIncomingVideoNow()">
+        ▶ Ver video
+      </button>
+    </div>
+  ` : '';
+
+  const waitingBanner = (state.waitingForVideo && state.mobileScreen !== 'P06') ? `
+    <div style="background:var(--purple-light);border-bottom:1px solid var(--border-light);padding:7px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--navy-dark);font-weight:700;">
+      <span>🕒 Esperando video anterior${qCount > 0 ? ` · ${qCount} en cola` : ''}</span>
+      <button class="link-underline-btn" style="font-size:11.5px;" onclick="goToMobile('P06')">Ver espera</button>
+    </div>
+  ` : '';
 
   return `
+    ${incomingVideoBanner}
+    ${waitingBanner}
     <div class="mobile-status-strip ${toneClass}">
       <span>💻</span>
       <span><strong>Andrés:</strong> ${escapeHtml(state.agentLiveActivity)}</span>
@@ -1746,7 +1803,8 @@ function renderMobileScreenContent() {
     // ------------------------------------------------------------------------
     // P05 · Confirmación de consulta
     // ------------------------------------------------------------------------
-    case 'P05':
+    case 'P05': {
+      const isQueueMode = Boolean(state.waitingForVideo);
       return `
         <div class="mobile-topbar">
           <button class="mobile-back-btn" onclick="goToMobile('P04')">
@@ -1757,10 +1815,12 @@ function renderMobileScreenContent() {
         ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad">
           <h2 style="font-size:26px;font-weight:800;color:var(--navy-dark);line-height:1.2;margin-bottom:8px;">
-            ¿Deseas enviar esta pregunta?
+            ${isQueueMode ? '¿Dejar esta pregunta en cola?' : '¿Deseas enviar esta pregunta?'}
           </h2>
           <p style="font-size:15px;color:var(--text-muted);margin-bottom:22px;">
-            Andrés recibirá tu consulta y te enviará un video en LSC.
+            ${isQueueMode
+              ? 'Mientras esperas tu video actual, esta pregunta quedará guardada para enviarla después.'
+              : 'Andrés recibirá tu consulta y te enviará un video en LSC.'}
           </p>
 
           <div style="background:var(--purple-light);border:2px solid var(--purple-primary);border-radius:22px;padding:22px 20px;margin-bottom:24px;">
@@ -1773,15 +1833,22 @@ function renderMobileScreenContent() {
           </div>
 
           <div style="margin-top:auto;display:flex;flex-direction:column;gap:12px;">
-            <button class="btn-primary" style="width:100%;padding:16px;" onclick="sendQuestionFromMobileToDesktop()">
-              <span>✈️</span> <span>Enviar pregunta</span>
-            </button>
+            ${isQueueMode ? `
+              <button class="btn-primary" style="width:100%;padding:16px;" onclick="queueExtraQuestionFromMobile()">
+                <span>📥</span> <span>Dejar pregunta en cola</span>
+              </button>
+            ` : `
+              <button class="btn-primary" style="width:100%;padding:16px;" onclick="sendQuestionFromMobileToDesktop()">
+                <span>✈️</span> <span>Enviar pregunta</span>
+              </button>
+            `}
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="goToMobile('P04')">
               Cambiar pregunta de ${cat.name}
             </button>
           </div>
         </div>
       `;
+    }
 
     // ------------------------------------------------------------------------
     // E01 · Error al enviar la pregunta
@@ -1833,53 +1900,75 @@ function renderMobileScreenContent() {
     // ------------------------------------------------------------------------
     // P06 · Consulta enviada y en espera
     // ------------------------------------------------------------------------
-    case 'P06':
+    case 'P06': {
+      const queued = state.queuedQuestions || [];
       return `
         <div class="mobile-topbar">
           ${getBrandLogoSVG('small')}
         </div>
         ${renderMobileLiveStatusStrip()}
         <div class="mobile-pad" style="align-items:center;text-align:center;">
-          <div class="status-circle purple" style="width:76px;height:76px;margin-top:6px;">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <div class="status-circle purple" style="width:70px;height:70px;margin-top:4px;">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <polyline points="12 6 12 12 16 14"/>
             </svg>
           </div>
 
-          <h2 style="font-size:24px;font-weight:800;color:var(--navy-dark);line-height:1.22;margin-bottom:8px;">
+          <h2 style="font-size:23px;font-weight:800;color:var(--navy-dark);line-height:1.22;margin-bottom:6px;">
             Consulta enviada, esperando respuesta
           </h2>
-          <p style="font-size:14.5px;color:var(--text-muted);line-height:1.45;margin-bottom:16px;">
+          <p style="font-size:14px;color:var(--text-muted);line-height:1.45;margin-bottom:14px;">
             Andrés está preparando el video en LSC para responderte.
           </p>
 
-          <div style="display:inline-flex;align-items:center;gap:8px;background:var(--navy-dark);color:var(--white);padding:9px 18px;border-radius:999px;font-size:13.5px;font-weight:700;margin-bottom:20px;">
+          <div style="display:inline-flex;align-items:center;gap:8px;background:var(--navy-dark);color:var(--white);padding:8px 16px;border-radius:999px;font-size:13px;font-weight:700;margin-bottom:14px;">
             <span>🕒</span>
             <span>Esperando respuesta de Andrés</span>
           </div>
 
-          <div style="width:100%;background:var(--purple-light);border-radius:20px;padding:18px 20px;text-align:left;margin-bottom:18px;">
-            <span class="pill-tag" style="background:var(--white);text-transform:none;font-size:12px;padding:4px 12px;margin-bottom:10px;">
+          <div style="width:100%;background:var(--purple-light);border-radius:18px;padding:15px 18px;text-align:left;margin-bottom:12px;">
+            <span class="pill-tag" style="background:var(--white);text-transform:none;font-size:11.5px;padding:4px 10px;margin-bottom:8px;">
               ${cat.name}
             </span>
-            <div style="font-size:17px;font-weight:800;color:var(--navy-dark);line-height:1.35;">
+            <div style="font-size:16px;font-weight:800;color:var(--navy-dark);line-height:1.35;">
               ${escapeHtml(state.selectedQuestion)}
             </div>
           </div>
 
-          <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:13px 15px;display:flex;align-items:center;gap:12px;text-align:left;margin-top:auto;">
+          ${queued.length > 0 ? `
+            <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:16px;padding:12px 14px;text-align:left;margin-bottom:12px;">
+              <div style="font-size:12.5px;font-weight:800;color:var(--teal-dark);margin-bottom:6px;">
+                📋 Preguntas en cola (${queued.length})
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                ${queued.map((item, idx) => `
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--white);padding:7px 10px;border-radius:10px;font-size:12px;color:var(--navy-dark);">
+                    <span style="font-weight:700;line-height:1.3;">${idx + 1}. ${escapeHtml(item.question)}</span>
+                    <button style="background:none;border:none;color:var(--danger-text);font-weight:800;cursor:pointer;font-size:13px;padding:2px 6px;" onclick="removeQueuedQuestion('${escapeAttr(item.id)}')" title="Quitar de la cola">✕</button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:14px;padding:11px 13px;display:flex;align-items:center;gap:10px;text-align:left;margin-top:auto;">
             <span style="color:var(--purple-primary);font-weight:800;">⚠️</span>
-            <span style="font-size:13px;color:var(--text-muted);line-height:1.4;">
-              Cuando Andrés envíe el video, se reproducirá automáticamente aquí.
+            <span style="font-size:12.5px;color:var(--text-muted);line-height:1.35;">
+              Cuando Andrés envíe el video, te avisaremos aquí mismo.
             </span>
           </div>
 
-          <button class="btn-outline" style="width:100%;margin-top:12px;justify-content:center;" onclick="promptNextQuestionChoiceModal()">
+          <button class="btn-primary" style="width:100%;margin-top:10px;justify-content:center;padding:13px;" onclick="browseExtraQuestionWhileWaiting()">
+            🔍 Buscar otra pregunta mientras espero
+          </button>
+
+          <button class="btn-outline" style="width:100%;margin-top:8px;justify-content:center;padding:12px;" onclick="promptNextQuestionChoiceModal()">
             ← Cancelar o cambiar pregunta
           </button>
         </div>
       `;
+    }
 
     // ------------------------------------------------------------------------
     // P07 · Reproducción del video en LSC
@@ -1958,6 +2047,20 @@ function renderMobileScreenContent() {
           <button class="btn-primary" style="width:100%;padding:15px;margin-top:10px;" onclick="goToMobile('P08')">
             Continuar
           </button>
+
+          ${(state.queuedQuestions || []).length > 0 ? `
+            <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:14px;padding:11px 13px;margin-top:10px;text-align:left;">
+              <div style="font-size:12px;font-weight:800;color:var(--teal-dark);margin-bottom:6px;">
+                📋 Tienes ${state.queuedQuestions.length} pregunta(s) en cola
+              </div>
+              <div style="font-size:12.5px;font-weight:700;color:var(--navy-dark);margin-bottom:8px;line-height:1.3;">
+                Siguiente: «${escapeHtml(state.queuedQuestions[0].question)}»
+              </div>
+              <button class="btn-primary" style="width:100%;padding:11px;font-size:13px;" onclick="sendNextQueuedQuestion()">
+                ✈️ Enviar siguiente pregunta en cola
+              </button>
+            </div>
+          ` : ''}
         </div>
       `;
     }
@@ -2025,6 +2128,19 @@ function renderMobileScreenContent() {
           </p>
 
           <div style="width:100%;display:flex;flex-direction:column;gap:12px;">
+            ${(state.queuedQuestions || []).length > 0 ? `
+              <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:16px;padding:12px 14px;text-align:left;">
+                <div style="font-size:12.5px;font-weight:800;color:var(--teal-dark);margin-bottom:4px;">
+                  📋 Siguiente en cola (${state.queuedQuestions.length})
+                </div>
+                <div style="font-size:13px;font-weight:700;color:var(--navy-dark);margin-bottom:8px;line-height:1.3;">
+                  «${escapeHtml(state.queuedQuestions[0].question)}»
+                </div>
+                <button class="btn-primary" style="width:100%;padding:13px;font-size:14px;" onclick="sendNextQueuedQuestion()">
+                  ✈️ Enviar pregunta en cola
+                </button>
+              </div>
+            ` : ''}
             <button class="btn-primary" style="width:100%;padding:16px;" onclick="promptNextQuestionChoiceModal()">
               Realizar otra pregunta
             </button>
@@ -2560,6 +2676,8 @@ function sendQuestionFromMobileToDesktop() {
 
   saveAndSyncState({
     isLinked: true,
+    waitingForVideo: true,
+    incomingVideoAlert: null,
     selectedVideoId: state.selectedCategoryId,
     visitorLiveActivity: 'Esperando tu respuesta en video LSC',
     agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
@@ -2568,6 +2686,99 @@ function sendQuestionFromMobileToDesktop() {
     mobileFlowModal: null
   });
   showLiveToast('Pregunta enviada al computador de Andrés', '✈️');
+}
+
+function browseExtraQuestionWhileWaiting() {
+  saveAndSyncState({
+    waitingForVideo: true,
+    mobileScreen: 'P03',
+    mobileFlowModal: null,
+    visitorLiveActivity: 'Esperando video · Buscando pregunta extra en cola'
+  });
+  showLiveToast('Busca otra pregunta y déjala en cola mientras llega tu video.', '🔍');
+}
+
+function queueExtraQuestionFromMobile() {
+  const cat = CATEGORIES_DATA[state.selectedCategoryId] || CATEGORIES_DATA.requisitos;
+  const currentQueue = state.queuedQuestions || [];
+  const item = {
+    id: 'q-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    categoryId: cat.id,
+    categoryName: cat.name,
+    question: state.selectedQuestion,
+    time: getCurrentTimeFormatted()
+  };
+
+  const nextQueue = [...currentQueue, item];
+  const activityText = `Esperando video · ${nextQueue.length} pregunta(s) en cola`;
+
+  dispatchCloudEvent({
+    type: 'QUEUE_UPDATE',
+    count: nextQueue.length,
+    visitorLiveActivity: activityText
+  });
+
+  saveAndSyncState({
+    queuedQuestions: nextQueue,
+    mobileScreen: 'P06',
+    mobileFlowModal: null,
+    visitorLiveActivity: activityText
+  });
+  showLiveToast(`Pregunta guardada en cola (${nextQueue.length} en espera)`, '📥');
+}
+
+function removeQueuedQuestion(id) {
+  const nextQueue = (state.queuedQuestions || []).filter(item => item.id !== id);
+  saveAndSyncState({ queuedQuestions: nextQueue });
+  showLiveToast('Pregunta quitada de la cola', '🗑️');
+}
+
+function openIncomingVideoNow() {
+  const alertInfo = state.incomingVideoAlert;
+  if (!alertInfo) {
+    goToMobile('P07');
+    return;
+  }
+  saveAndSyncState({
+    selectedVideoId: alertInfo.videoId,
+    selectedCategoryId: alertInfo.categoryId,
+    selectedQuestion: alertInfo.question,
+    incomingVideoAlert: null,
+    waitingForVideo: false,
+    mobileScreen: 'P07',
+    mobileFlowModal: null,
+    videoPlaying: true,
+    videoCurrentTime: 0,
+    visitorLiveActivity: 'Reproduciendo el video LSC en su celular'
+  });
+}
+
+function sendNextQueuedQuestion() {
+  const currentQueue = state.queuedQuestions || [];
+  if (currentQueue.length === 0) return;
+
+  const [nextItem, ...restQueue] = currentQueue;
+  dispatchCloudEvent({
+    type: 'VISITOR_QUESTION',
+    categoryId: nextItem.categoryId,
+    question: nextItem.question
+  });
+
+  saveAndSyncState({
+    isLinked: true,
+    waitingForVideo: true,
+    incomingVideoAlert: null,
+    selectedCategoryId: nextItem.categoryId,
+    selectedVideoId: nextItem.categoryId,
+    selectedQuestion: nextItem.question,
+    queuedQuestions: restQueue,
+    visitorLiveActivity: 'Esperando tu respuesta en video LSC',
+    agentLiveActivity: '¡Recibió tu pregunta en cola! Revisando el video LSC...',
+    mobileScreen: 'P06',
+    desktopScreen: 'A04',
+    mobileFlowModal: null
+  });
+  showLiveToast('Siguiente pregunta de la cola enviada a Andrés', '✈️');
 }
 
 // Opciones al querer hacer otra pregunta (Misma categoría vs. Apartado de categorías)
@@ -2663,6 +2874,7 @@ function buildSentVideoRecord(videoId, categoryId, question) {
 function sendVideoToVisitorPhone() {
   const record = buildSentVideoRecord(state.selectedVideoId, state.selectedCategoryId, state.selectedQuestion);
   const nextHistory = [...(state.sentVideosHistory || []), record];
+  const isBrowsingExtraSplit = state.viewMode === 'split' && ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
 
   dispatchCloudEvent({
     type: 'SEND_LSC_VIDEO',
@@ -2673,16 +2885,28 @@ function sendVideoToVisitorPhone() {
 
   saveAndSyncState({
     desktopScreen: 'A07',
-    mobileScreen: 'P07',
+    mobileScreen: isBrowsingExtraSplit ? state.mobileScreen : 'P07',
     mobileFlowModal: null,
+    waitingForVideo: false,
+    incomingVideoAlert: isBrowsingExtraSplit ? {
+      videoId: state.selectedVideoId,
+      categoryId: state.selectedCategoryId,
+      question: state.selectedQuestion,
+      videoTitle: record.videoTitle
+    } : null,
     sentVideosHistory: nextHistory,
     videoPlaying: true,
     videoCurrentTime: 0,
     desktopPreviewPlaying: false,
     agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
-    visitorLiveActivity: 'Reproduciendo el video LSC en su celular'
+    visitorLiveActivity: isBrowsingExtraSplit ? 'Video recibido · Buscando pregunta extra' : 'Reproduciendo el video LSC en su celular'
   });
-  showLiveToast('¡Video en LSC enviado y reproduciéndose en el celular!', '🎬');
+  showLiveToast(
+    isBrowsingExtraSplit
+      ? '¡Video enviado! Patricia recibió el aviso arriba mientras busca otra pregunta.'
+      : '¡Video en LSC enviado y reproduciéndose en el celular!',
+    '🎬'
+  );
 }
 
 // Controles del reproductor de video en el celular (P07)
@@ -2869,6 +3093,9 @@ function resetToNewSession() {
     mobileScreen: 'P01',
     enteredPin: state.viewMode === 'split' ? newPin.split('') : ['', '', '', ''],
     selectedQuestion: null,
+    waitingForVideo: false,
+    queuedQuestions: [],
+    incomingVideoAlert: null,
     mobileDraftMsg: '',
     desktopDraftMsg: '',
     videoCurrentTime: 0,
