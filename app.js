@@ -1969,9 +1969,9 @@ function renderMobileScreenContent() {
               class="btn-outline"
               style="padding:7px 12px;font-size:12px;border-width:1.5px;"
               onclick="downloadConsultationRecord()"
-              title="Descargar conversación e información de videos recibidos"
+              title="Descargar conversación e información de videos recibidos en PDF"
             >
-              📥 Descargar chat
+              📥 Descargar PDF
             </button>
           </div>
 
@@ -2062,7 +2062,7 @@ function renderMobileScreenContent() {
             style="width:100%;padding:14px;margin-bottom:10px;font-size:14.5px;"
             onclick="downloadConsultationRecord()"
           >
-            <span>📥</span> <span>Descargar chat e info de videos</span>
+            <span>📥</span> <span>Descargar PDF (chat e info de videos)</span>
           </button>
 
           <button class="link-underline-btn" style="font-size:13.5px;" onclick="resetToNewSession()">
@@ -2735,61 +2735,127 @@ function triggerBrowserBlobDownload(blob, filename) {
   }, 500);
 }
 
+function cleanPdfText(str) {
+  // Eliminar emojis que no soporta Helvetica estándar en PDF manteniendo tildes y eñes
+  return String(str || '')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function downloadConsultationRecord() {
   const nowStr = new Date().toLocaleString('es-CO');
   const videos = state.sentVideosHistory || [];
   const messages = state.chatMessages || [];
 
-  const lines = [
-    '============================================================',
-    '  tuSoluciónLSC — Registro de Consulta (Universidad Icesi)',
-    '============================================================',
-    `Fecha y hora de descarga : ${nowStr}`,
-    `PIN de sesión            : ${state.sessionPin}`,
-    '',
-    '------------------------------------------------------------',
-    '1. VIDEOS EN LSC RECIBIDOS Y CONTENIDO DE LA INFORMACIÓN',
-    '------------------------------------------------------------'
-  ];
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    showLiveToast('No se pudo cargar el generador PDF. Verifica tu conexión.', '⚠️');
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 42;
+  const maxWidth = pageWidth - margin * 2;
+  let y = 0;
+
+  function ensureSpace(neededHeight = 28) {
+    if (y + neededHeight > pageHeight - 48) {
+      doc.addPage();
+      y = 48;
+    }
+  }
+
+  function writeWrapped(text, fontSize = 10.5, isBold = false, color = [31, 26, 78], indent = 0, lineH = 15) {
+    doc.setFont('helvetica', isBold ? 'bold' : 'normal');
+    doc.setFontSize(fontSize);
+    doc.setTextColor(color[0], color[1], color[2]);
+    const lines = doc.splitTextToSize(cleanPdfText(text), maxWidth - indent);
+    lines.forEach(line => {
+      ensureSpace(lineH + 4);
+      doc.text(line, margin + indent, y);
+      y += lineH;
+    });
+  }
+
+  // Encabezado institucional
+  doc.setFillColor(81, 48, 217); // #5130D9
+  doc.rect(0, 0, pageWidth, 86, 'F');
+  doc.setFillColor(92, 191, 188); // #5CBFBC
+  doc.rect(0, 82, pageWidth, 5, 'F');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(255, 255, 255);
+  doc.text('tuSolucionLSC - Resumen de Consulta', margin, 38);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10.5);
+  doc.text(cleanPdfText(`Universidad Icesi  |  PIN de sesion: ${state.sessionPin}  |  Fecha: ${nowStr}`), margin, 62);
+
+  y = 114;
+
+  // Sección 1: Videos en LSC recibidos y contenido de la información
+  doc.setFillColor(240, 238, 251);
+  doc.roundedRect(margin, y - 16, maxWidth, 26, 6, 6, 'F');
+  writeWrapped('1. VIDEOS EN LSC RECIBIDOS Y CONTENIDO DE LA INFORMACION', 11.5, true, [81, 48, 217], 8, 18);
+  y += 6;
 
   if (videos.length === 0) {
-    lines.push('No se han enviado videos en LSC durante esta sesión todavía.');
+    writeWrapped('No se recibieron videos en LSC durante esta sesion.', 10.5, false, [95, 92, 120], 4, 16);
+    y += 10;
   } else {
     videos.forEach((v, idx) => {
-      lines.push('');
-      lines.push(`[Video #${idx + 1}] ${v.videoTitle} (Duración: ${v.duration}) · Recibido a las ${v.time}`);
-      lines.push(`Categoría : ${v.categoryName}`);
-      lines.push(`Pregunta  : ${v.question}`);
-      lines.push(`Descripción: ${v.videoDesc}`);
-      lines.push('Resumen en español:');
-      (v.summarySteps || []).forEach(step => lines.push(`  - ${step}`));
-      lines.push('Contenido en Lengua de Señas Colombiana (LSC):');
-      (v.lscCaptions || []).forEach(cap => lines.push(`  • ${cap}`));
+      ensureSpace(90);
+      writeWrapped(`Video #${idx + 1}: ${v.videoTitle} (${v.duration}) - Recibido a las ${v.time}`, 11.5, true, [31, 26, 78], 0, 17);
+      writeWrapped(`Categoria: ${v.categoryName}`, 10, true, [30, 110, 102], 8, 15);
+      writeWrapped(`Pregunta consultada: "${v.question}"`, 10.5, false, [31, 26, 78], 8, 15);
+      writeWrapped(`Descripcion: ${v.videoDesc}`, 10, false, [95, 92, 120], 8, 14);
+      y += 3;
+      writeWrapped('Resumen de la informacion en espanol:', 10, true, [81, 48, 217], 8, 14);
+      (v.summarySteps || []).forEach(step => {
+        writeWrapped(`- ${step}`, 10, false, [31, 26, 78], 16, 14);
+      });
+      y += 3;
+      writeWrapped('Contenido en Lengua de Senas Colombiana (LSC):', 10, true, [30, 110, 102], 8, 14);
+      (v.lscCaptions || []).forEach(cap => {
+        writeWrapped(`* ${cap}`, 9.5, false, [62, 58, 93], 16, 13.5);
+      });
+      y += 12;
+      ensureSpace(12);
+      doc.setDrawColor(231, 229, 243);
+      doc.line(margin, y - 4, pageWidth - margin, y - 4);
+      y += 8;
     });
   }
 
-  lines.push('');
-  lines.push('------------------------------------------------------------');
-  lines.push('2. CONVERSACIÓN DEL CHAT CON ANDRÉS');
-  lines.push('------------------------------------------------------------');
+  y += 8;
+  ensureSpace(40);
+
+  // Sección 2: Conversación del chat con Andrés
+  doc.setFillColor(240, 238, 251);
+  doc.roundedRect(margin, y - 16, maxWidth, 26, 6, 6, 'F');
+  writeWrapped('2. HISTORIAL DEL CHAT CON ANDRES', 11.5, true, [81, 48, 217], 8, 18);
+  y += 6;
 
   if (messages.length === 0) {
-    lines.push('No hay mensajes registrados en el chat.');
+    writeWrapped('No se registraron mensajes en el chat durante esta sesion.', 10.5, false, [95, 92, 120], 4, 16);
   } else {
     messages.forEach(m => {
-      const author = m.sender === 'visitor' ? 'Visitante (Patricia)' : 'Funcionario (Andrés)';
-      lines.push(`[${m.time}] ${author}: ${m.text}`);
+      ensureSpace(34);
+      const isVisitor = m.sender === 'visitor';
+      const author = isVisitor ? 'Visitante (Patricia)' : 'Funcionario (Andres)';
+      const authorColor = isVisitor ? [81, 48, 217] : [30, 110, 102];
+      writeWrapped(`[${m.time}] ${author}:`, 9.5, true, authorColor, 4, 13);
+      writeWrapped(m.text, 10.5, false, [31, 26, 78], 12, 15);
+      y += 4;
     });
   }
 
-  lines.push('');
-  lines.push('============================================================');
-  lines.push('Gracias por utilizar tuSoluciónLSC.');
-
-  const content = lines.join('\r\n');
-  const blob = new Blob(['\uFEFF' + content], { type: 'text/plain;charset=utf-8' });
-  triggerBrowserBlobDownload(blob, `tuSolucionLSC-consulta-PIN-${state.sessionPin}.txt`);
-  showLiveToast('Chat e información de videos descargados (.txt)', '📥');
+  doc.save(`tuSolucionLSC-consulta-PIN-${state.sessionPin}.pdf`);
+  showLiveToast('PDF con chat e información de videos descargado', '📥');
 }
 
 function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
