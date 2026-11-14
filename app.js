@@ -29,10 +29,10 @@ const CATEGORIES_DATA = {
       '3. Modalidad presencial diurna e información de acompañamiento.'
     ],
     lscCaptions: [
-      '👋 [Seña LSC]: ¡Hola! Bienvenido a la Universidad Icesi.',
-      '🎓 [Seña LSC]: Contamos con 6 facultades y más de 28 carreras de pregrado.',
-      '🗓️ [Seña LSC]: La duración de los programas es de 8 a 10 semestres académicos.',
-      '🤝 [Seña LSC]: Ofrecemos acompañamiento e intérpretes LSC durante tu proceso.'
+      '[Seña LSC]: ¡Hola! Bienvenido a la Universidad Icesi.',
+      '[Seña LSC]: Contamos con 6 facultades y más de 28 carreras de pregrado.',
+      '[Seña LSC]: La duración de los programas es de 8 a 10 semestres académicos.',
+      '[Seña LSC]: Ofrecemos acompañamiento e intérpretes LSC durante tu proceso.'
     ],
     questions: [
       '¿Qué carreras de pregrado ofrecen y cuál es su duración?',
@@ -55,10 +55,10 @@ const CATEGORIES_DATA = {
       '3. Opciones de financiación directa y fechas de pago por cuotas.'
     ],
     lscCaptions: [
-      '💰 [Seña LSC]: El valor del semestre depende del programa de pregrado elegido.',
-      '🏅 [Seña LSC]: Puedes postularte a becas por mérito académico y apoyo socioeconómico.',
-      '🏦 [Seña LSC]: Contamos con financiación directa Icesi, ICETEX y entidades aliadas.',
-      '📅 [Seña LSC]: Puedes diferir el pago de tu matrícula en cuotas mensuales.'
+      '[Seña LSC]: El valor del semestre depende del programa de pregrado elegido.',
+      '[Seña LSC]: Puedes postularte a becas por mérito académico y apoyo socioeconómico.',
+      '[Seña LSC]: Contamos con financiación directa Icesi, ICETEX y entidades aliadas.',
+      '[Seña LSC]: Puedes diferir el pago de tu matrícula en cuotas mensuales.'
     ],
     questions: [
       '¿Cuál es el valor del semestre y qué opciones de becas tienen?',
@@ -81,10 +81,10 @@ const CATEGORIES_DATA = {
       '3. Plazos de inscripción y pasos finales en admisiones.'
     ],
     lscCaptions: [
-      '🪪 [Seña LSC]: Paso 1: Presentar copia del documento de identidad vigente.',
-      '📄 [Seña LSC]: Paso 2: Entregar certificado de notas, diploma o acta de grado de bachiller.',
-      '📝 [Seña LSC]: Paso 3: Adjuntar el resultado de las pruebas Saber 11 (ICFES).',
-      '✅ [Seña LSC]: Paso 4: Completar el formulario en línea antes de la fecha límite.'
+      '[Seña LSC]: Paso 1: Presentar copia del documento de identidad vigente.',
+      '[Seña LSC]: Paso 2: Entregar certificado de notas, diploma o acta de grado de bachiller.',
+      '[Seña LSC]: Paso 3: Adjuntar el resultado de las pruebas Saber 11 (ICFES).',
+      '[Seña LSC]: Paso 4: Completar el formulario en línea antes de la fecha límite.'
     ],
     questions: [
       '¿Qué requisitos necesito para inscribir a mi hijo?',
@@ -122,11 +122,21 @@ const DEFAULT_STATE = {
   waitingForVideo: false,
   queuedQuestions: [],
   incomingVideoAlert: null,
+  receivedQuestionsList: [],
+  activeQuestionId: null,
+  desktopQueuePanelOpen: false,
+  desktopNewQuestionAlert: false,
+  mobileVideoInboxOpen: false,
+  mobileNewVideoAlert: false,
   mobileDraftMsg: '',
   desktopDraftMsg: ''
 };
 
 let isDownloadingVideo = false;
+let isRecordingGeminiVoice = false;
+let isTranscribingGemini = false;
+let geminiMediaRecorder = null;
+let geminiAudioChunks = [];
 
 function generateUniquePin() {
   let pin = '';
@@ -212,7 +222,7 @@ function saveAndSyncState(partial = {}, broadcastLocal = true) {
   renderApp();
 }
 
-function showLiveToast(message, icon = '🔔') {
+function showLiveToast(message) {
   let toastEl = document.getElementById('live-toast-banner');
   if (!toastEl) {
     toastEl = document.createElement('div');
@@ -220,7 +230,7 @@ function showLiveToast(message, icon = '🔔') {
     toastEl.className = 'live-toast';
     document.body.appendChild(toastEl);
   }
-  toastEl.innerHTML = `<span style="font-size:16px;">${icon}</span> <span>${escapeHtml(message)}</span>`;
+  toastEl.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--teal-primary);flex-shrink:0;"></span> <span>${escapeHtml(message)}</span>`;
   toastEl.style.display = 'flex';
   if (toastTimeout) clearTimeout(toastTimeout);
   toastTimeout = setTimeout(() => {
@@ -421,6 +431,12 @@ function processIncomingCloudEvent(ev) {
         const resetFields = isFreshSession ? {
           sentVideosHistory: [],
           queuedQuestions: [],
+          receivedQuestionsList: [],
+          activeQuestionId: null,
+          desktopQueuePanelOpen: false,
+          desktopNewQuestionAlert: false,
+          mobileVideoInboxOpen: false,
+          mobileNewVideoAlert: false,
           chatMessages: [],
           waitingForVideo: false,
           mobileDraftMsg: '',
@@ -440,7 +456,7 @@ function processIncomingCloudEvent(ev) {
           type: 'LINK_ACK',
           pin: state.sessionPin
         }, state.sessionPin);
-        showLiveToast(`¡Andrés se conectó con el PIN ${state.sessionPin}!`, '✅');
+        showLiveToast(`¡Andrés se conectó con el PIN ${state.sessionPin}!`, '');
 
         if (!isFreshSession && state.mobileScreen === 'P06') {
           dispatchCloudEvent({
@@ -471,6 +487,12 @@ function processIncomingCloudEvent(ev) {
         const resetFields = isFreshDesktop ? {
           sentVideosHistory: [],
           queuedQuestions: [],
+          receivedQuestionsList: [],
+          activeQuestionId: null,
+          desktopQueuePanelOpen: false,
+          desktopNewQuestionAlert: false,
+          mobileVideoInboxOpen: false,
+          mobileNewVideoAlert: false,
           chatMessages: [],
           waitingForVideo: false,
           mobileDraftMsg: '',
@@ -480,7 +502,7 @@ function processIncomingCloudEvent(ev) {
         } : {};
 
         netStatus.isLinkingPin = false;
-        showLiveToast(`¡Dispositivo vinculado con PIN ${ev.pin || state.sessionPin}!`, '✅');
+        showLiveToast(`¡Dispositivo vinculado con PIN ${ev.pin || state.sessionPin}!`, '');
         saveAndSyncState({
           ...resetFields,
           sessionPin: ev.pin || state.sessionPin,
@@ -503,7 +525,7 @@ function processIncomingCloudEvent(ev) {
         pinVerifyPollInterval = null;
       }
       netStatus.isLinkingPin = false;
-      showLiveToast(`¡Conexión establecida con el PIN ${ev.pin || state.sessionPin}!`, '✅');
+      showLiveToast(`¡Conexión establecida con el PIN ${ev.pin || state.sessionPin}!`, '');
       saveAndSyncState({
         sentVideosHistory: !state.isLinked ? [] : state.sentVideosHistory,
         queuedQuestions: !state.isLinked ? [] : state.queuedQuestions,
@@ -536,7 +558,7 @@ function processIncomingCloudEvent(ev) {
     case 'MOBILE_STATUS_UPDATE': {
       const desc = getVisitorStatusDescription(ev.mobileScreen, ev.categoryId || state.selectedCategoryId);
       if (ev.toastForAgent) {
-        showLiveToast(ev.toastForAgent, '📱');
+        showLiveToast(ev.toastForAgent, '');
       }
       saveAndSyncState({
         visitorLiveActivity: desc,
@@ -548,7 +570,7 @@ function processIncomingCloudEvent(ev) {
     case 'DESKTOP_STATUS_UPDATE': {
       const desc = getAgentStatusDescription(ev.desktopScreen, ev.videoId || state.selectedVideoId);
       if (ev.toastForVisitor) {
-        showLiveToast(ev.toastForVisitor, '💻');
+        showLiveToast(ev.toastForVisitor, '');
       }
       saveAndSyncState({
         agentLiveActivity: desc
@@ -556,57 +578,52 @@ function processIncomingCloudEvent(ev) {
       break;
     }
 
-    case 'VISITOR_QUESTION':
-      showLiveToast(`Nueva pregunta recibida: «${ev.question}»`, '📩');
+    case 'VISITOR_QUESTION': {
+      const cId = ev.categoryId || 'programas';
+      const catObj = CATEGORIES_DATA[cId] || CATEGORIES_DATA.programas;
+      const qId = ev.questionId || ('pq-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6));
+      const existingList = state.receivedQuestionsList || [];
+      const alreadyExists = existingList.some(q => q.id === qId);
+      const nextList = alreadyExists
+        ? existingList
+        : [...existingList, {
+            id: qId,
+            categoryId: cId,
+            categoryName: catObj.name,
+            question: ev.question,
+            time: getCurrentTimeFormatted(),
+            status: 'pending'
+          }];
+
+      showLiveToast(`Pregunta de Patricia: «${ev.question}»`);
       saveAndSyncState({
         isLinked: true,
-        selectedCategoryId: ev.categoryId || 'programas',
-        selectedVideoId: ev.categoryId || 'programas',
-        selectedQuestion: ev.question,
-        visitorLiveActivity: 'Esperando tu respuesta en video LSC',
-        agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
-        desktopScreen: 'A04'
+        receivedQuestionsList: nextList,
+        desktopNewQuestionAlert: true,
+        visitorLiveActivity: 'Envió una pregunta y sigue navegando',
+        agentLiveActivity: 'Recibió una pregunta de Patricia en la lista'
       });
       break;
+    }
 
     case 'SEND_LSC_VIDEO': {
       const vId = ev.videoId || state.selectedCategoryId;
       const cId = ev.categoryId || state.selectedCategoryId;
       const qText = ev.question || state.selectedQuestion;
-      const isBrowsingExtra = ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
       const record = buildSentVideoRecord(vId, cId, qText, {
         id: ev.recordId,
-        watched: !isBrowsingExtra
+        watched: false
       });
       const nextHistory = [...(state.sentVideosHistory || []), record];
 
-      if (isBrowsingExtra) {
-        showLiveToast('🎬 ¡Andrés te envió el video de tu consulta! Toca "Ver video" arriba.', '🎬');
-        saveAndSyncState({
-          isLinked: true,
-          waitingForVideo: false,
-          selectedVideoId: vId,
-          sentVideosHistory: nextHistory,
-          agentLiveActivity: 'Te envió el video en LSC · Listo para verlo',
-          visitorLiveActivity: 'Video recibido · Buscando pregunta extra'
-        });
-      } else {
-        showLiveToast('¡Andrés te ha enviado el video de respuesta en LSC!', '🎬');
-        saveAndSyncState({
-          isLinked: true,
-          waitingForVideo: false,
-          selectedVideoId: vId,
-          selectedCategoryId: cId,
-          selectedQuestion: qText,
-          sentVideosHistory: nextHistory,
-          agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
-          visitorLiveActivity: 'Reproduciendo el video LSC en su celular',
-          mobileScreen: 'P07',
-          mobileFlowModal: null,
-          videoPlaying: true,
-          videoCurrentTime: 0
-        });
-      }
+      showLiveToast('Video recibido a tu pregunta. Toca el botón abajo a la derecha para verlo.');
+      saveAndSyncState({
+        isLinked: true,
+        waitingForVideo: false,
+        sentVideosHistory: nextHistory,
+        mobileNewVideoAlert: true,
+        agentLiveActivity: 'Te envió el video en LSC · Disponible abajo a la derecha'
+      });
       break;
     }
 
@@ -614,7 +631,7 @@ function processIncomingCloudEvent(ev) {
       if (window.APP_FIXED_ROLE === 'desktop' || state.viewMode === 'split') {
         const incomingQueue = Array.isArray(ev.queuedQuestions) ? ev.queuedQuestions : state.queuedQuestions;
         if (ev.notify && incomingQueue.length > 0) {
-          showLiveToast(`Patricia dejó ${incomingQueue.length} pregunta(s) extra en cola mientras espera.`, '📋');
+          showLiveToast(`Patricia dejó ${incomingQueue.length} pregunta(s) extra en cola mientras espera.`, '');
         }
         saveAndSyncState({
           queuedQuestions: incomingQueue,
@@ -636,7 +653,7 @@ function processIncomingCloudEvent(ev) {
       break;
 
     case 'START_DIRECT_CHAT':
-      showLiveToast('La visitante confirmó entrar al chat directo («No encuentro mi pregunta»).', '💬');
+      showLiveToast('La visitante confirmó entrar al chat directo («No encuentro mi pregunta»).', '');
       saveAndSyncState({
         isLinked: true,
         visitorLiveActivity: 'En el chat directo contigo',
@@ -649,7 +666,7 @@ function processIncomingCloudEvent(ev) {
       break;
 
     case 'OPEN_CHAT':
-      showLiveToast('Andrés abrió el chat y está listo para responderte.', '💬');
+      showLiveToast('Andrés abrió el chat y está listo para responderte.', '');
       saveAndSyncState({
         isLinked: true,
         agentLiveActivity: 'En el chat activo contigo · Listo para responderte',
@@ -664,7 +681,7 @@ function processIncomingCloudEvent(ev) {
         const updatedMessages = exists ? state.chatMessages : [...state.chatMessages, ev.message];
 
         if (ev.message.sender === 'visitor') {
-          showLiveToast(`Mensaje de visitante: "${ev.message.text.slice(0, 38)}"`, '💬');
+          showLiveToast(`Mensaje de visitante: "${ev.message.text.slice(0, 38)}"`, '');
           saveAndSyncState({
             isLinked: true,
             visitorLiveActivity: 'Te envió un mensaje en el chat directo',
@@ -672,7 +689,7 @@ function processIncomingCloudEvent(ev) {
             desktopScreen: state.desktopScreen === 'A10' ? 'A10' : 'A09'
           });
         } else {
-          showLiveToast(`Nuevo mensaje de Andrés: "${ev.message.text.slice(0, 38)}"`, '💬');
+          showLiveToast(`Nuevo mensaje de Andrés: "${ev.message.text.slice(0, 38)}"`, '');
           saveAndSyncState({
             isLinked: true,
             agentLiveActivity: 'Te acaba de responder en el chat',
@@ -686,7 +703,7 @@ function processIncomingCloudEvent(ev) {
 
     case 'NEW_INQUIRY_SAME_CAT': {
       const catObj = CATEGORIES_DATA[ev.categoryId] || CATEGORIES_DATA.requisitos;
-      showLiveToast(`La visitante quiere hacer otra pregunta de «${catObj.name}».`, '📌');
+      showLiveToast(`La visitante quiere hacer otra pregunta de «${catObj.name}».`, '');
       saveAndSyncState({
         selectedCategoryId: ev.categoryId || state.selectedCategoryId,
         visitorLiveActivity: `Eligiendo otra pregunta de «${catObj.name}» (Paso 2 de 3)`,
@@ -696,7 +713,7 @@ function processIncomingCloudEvent(ev) {
     }
 
     case 'NEW_INQUIRY_ALL_CATS':
-      showLiveToast('La visitante volvió al apartado de categorías para elegir otro tema.', '📂');
+      showLiveToast('La visitante volvió al apartado de categorías para elegir otro tema.', '');
       saveAndSyncState({
         visitorLiveActivity: 'Explorando el apartado de categorías (Paso 1 de 3)',
         desktopScreen: 'A03'
@@ -704,7 +721,7 @@ function processIncomingCloudEvent(ev) {
       break;
 
     case 'FINISH_SESSION':
-      showLiveToast('La sesión de atención ha finalizado.', '✅');
+      showLiveToast('La sesión de atención ha finalizado.', '');
       saveAndSyncState({
         isLinked: false,
         visitorLiveActivity: 'Atención finalizada',
@@ -875,10 +892,60 @@ function renderDesktopLiveAlertBanner() {
   return `
     <div class="bilateral-status-banner ${toneClass}">
       <div style="display:flex;align-items:center;gap:10px;">
-        <span style="font-size:16px;">📱</span>
+        <span style="font-size:16px;"></span>
         <span><strong>Estado del celular en vivo:</strong> ${escapeHtml(state.visitorLiveActivity)}</span>
       </div>
       <span style="font-size:12px;opacity:0.85;">PIN ${state.sessionPin}</span>
+    </div>
+  `;
+}
+
+function renderDesktopFloatingDock() {
+  const showScreens = ['A03', 'A04', 'A05', 'A06', 'AE02', 'A07', 'A09', 'A10'];
+  if (!state.isLinked && (state.receivedQuestionsList || []).length === 0) return '';
+  if (!showScreens.includes(state.desktopScreen)) return '';
+
+  const list = state.receivedQuestionsList || [];
+  const pendingCount = list.filter(q => q.status !== 'answered').length;
+  const isExpanded = Boolean(state.desktopNewQuestionAlert);
+  const displayCount = pendingCount > 0 ? pendingCount : list.length;
+
+  return `
+    <div class="desktop-floating-dock">
+      ${state.desktopQueuePanelOpen ? `
+        <div class="floating-dock-panel">
+          <div class="floating-dock-header">
+            <h4>Preguntas de Patricia (${list.length})</h4>
+            <button style="background:none;border:none;font-size:16px;font-weight:800;color:var(--text-muted);cursor:pointer;" onclick="toggleDesktopQueueWidget()">✕</button>
+          </div>
+          ${list.length === 0 ? `
+            <div style="font-size:12.5px;color:var(--text-muted);padding:10px 4px;text-align:center;">
+              Aún no han llegado preguntas de Patricia.
+            </div>
+          ` : [...list].reverse().map(item => `
+            <button class="floating-dock-item ${item.status !== 'answered' ? 'unread' : ''}" onclick="selectQuestionFromDesktopWidget('${escapeAttr(item.id)}')">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span class="floating-dock-badge">${item.status !== 'answered' ? 'Pendiente' : 'Respondida'}</span>
+                <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(item.time || '')}</span>
+              </div>
+              <div style="font-size:12px;font-weight:700;color:var(--purple-primary);">${escapeHtml(item.categoryName)}</div>
+              <div style="font-size:13px;font-weight:800;color:var(--navy-dark);line-height:1.3;">${escapeHtml(item.question)}</div>
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      <button
+        class="floating-orb-btn ${isExpanded ? 'is-expanded' : 'compact'}"
+        onclick="toggleDesktopQueueWidget()"
+        title="Ver preguntas de Patricia"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        ${isExpanded ? `<span class="floating-orb-label">Pregunta de Patricia</span>` : ''}
+        ${displayCount > 0 ? `<span class="floating-orb-count">${displayCount}</span>` : ''}
+      </button>
     </div>
   `;
 }
@@ -896,7 +963,7 @@ function renderDesktopPane() {
       <div>
         ${showLinkedPill ? `
           <div class="session-linked-pill">
-            <span>✓ Sesión vinculada · PIN ${state.sessionPin}</span>
+            <span>Sesión vinculada · PIN ${state.sessionPin}</span>
           </div>
         ` : ''}
       </div>
@@ -905,6 +972,7 @@ function renderDesktopPane() {
       ${renderDesktopLiveAlertBanner()}
       ${renderDesktopScreenContent()}
     </div>
+    ${renderDesktopFloatingDock()}
   `;
 }
 
@@ -1057,14 +1125,14 @@ function renderDesktopQueueBanner() {
     <div style="background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:12px 16px;margin-bottom:18px;display:flex;flex-direction:column;gap:8px;text-align:left;">
       ${unwatched.length > 0 ? `
         <div style="font-size:12.5px;font-weight:700;color:var(--teal-dark);display:flex;align-items:center;gap:6px;">
-          <span>🎬</span>
+          <span></span>
           <span>Patricia tiene ${unwatched.length} video(s) enviado(s) pendiente(s) por reproducir en su bandeja.</span>
         </div>
       ` : ''}
       ${queued.length > 0 ? `
         <div>
           <div style="font-size:12.5px;font-weight:800;color:var(--navy-dark);margin-bottom:6px;">
-            📋 Preguntas en cola de Patricia (${queued.length}):
+             Preguntas en cola de Patricia (${queued.length}):
           </div>
           <div style="display:flex;flex-direction:column;gap:4px;">
             ${queued.map((item, idx) => `
@@ -1506,6 +1574,40 @@ function renderDesktopQueueBanner() {
           `).join('')}
         </div>
 
+        <div class="gemini-tools-row">
+          <button
+            type="button"
+            class="gemini-action-btn ${isRecordingGeminiVoice ? 'recording' : ''}"
+            onclick="toggleGeminiVoiceRecording()"
+            ${isTranscribingGemini ? 'disabled' : ''}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <span>
+              ${isRecordingGeminiVoice
+                ? 'Detener y transcribir con Gemini'
+                : (isTranscribingGemini ? 'Transcribiendo con Gemini...' : 'Dictar por voz (Gemini)')}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="gemini-action-btn"
+            onclick="rewriteDraftWithGemini()"
+            ${isTranscribingGemini || isRecordingGeminiVoice ? 'disabled' : ''}
+            title="Convierte notas cortas en una respuesta clara para Patricia"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/>
+            </svg>
+            <span>Redactar con Gemini</span>
+          </button>
+        </div>
+
         <form class="a10-input-row" onsubmit="handleDesktopChatSubmit(event)">
           <input
             type="text"
@@ -1534,54 +1636,60 @@ function renderMobileLiveStatusStrip() {
 
   const isVideoReady = state.desktopScreen === 'A07' || state.mobileScreen === 'P07';
   const toneClass = isVideoReady ? 'tone-teal' : '';
-  const qCount = (state.queuedQuestions || []).length;
-  const allVideos = state.sentVideosHistory || [];
-  const unwatchedVideos = allVideos.filter(v => !v.watched);
-
-  const incomingVideoBanner = (unwatchedVideos.length > 0 && state.mobileScreen !== 'P07') ? `
-    <div style="background:var(--teal-light);border-bottom:2px solid var(--teal-primary);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <div style="font-size:12px;font-weight:800;color:var(--teal-dark);line-height:1.3;">
-        ${unwatchedVideos.length === 1
-          ? `🎬 ¡Andrés te envió un video!<br><span style="font-weight:600;font-size:11px;">${escapeHtml(unwatchedVideos[0].videoTitle)}</span>`
-          : `🎬 Tienes ${unwatchedVideos.length} videos nuevos de Andrés<br><span style="font-weight:600;font-size:11px;">Toca para verlos sin perder tu avance</span>`
-        }
-      </div>
-      ${unwatchedVideos.length === 1 ? `
-        <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openReceivedVideoById('${escapeAttr(unwatchedVideos[0].id)}')">
-          ▶ Ver video
-        </button>
-      ` : `
-        <button class="btn-primary" style="padding:7px 11px;font-size:11.5px;border-radius:10px;flex-shrink:0;" onclick="openVideosInboxModal()">
-          ▶ Ver (${unwatchedVideos.length})
-        </button>
-      `}
-    </div>
-  ` : '';
-
-  const waitingBanner = ((state.waitingForVideo && state.mobileScreen !== 'P06') || (allVideos.length > 0 && state.mobileScreen !== 'P07' && unwatchedVideos.length === 0)) ? `
-    <div style="background:var(--purple-light);border-bottom:1px solid var(--border-light);padding:7px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--navy-dark);font-weight:700;">
-      <span>
-        ${state.waitingForVideo && state.mobileScreen !== 'P06'
-          ? `🕒 Esperando video${qCount > 0 ? ` · ${qCount} en cola` : ''}`
-          : `🎬 ${allVideos.length} video(s) recibido(s)`}
-      </span>
-      <div style="display:flex;align-items:center;gap:10px;">
-        ${allVideos.length > 0 ? `
-          <button class="link-underline-btn" style="font-size:11.5px;" onclick="openVideosInboxModal()">Mis videos (${allVideos.length})</button>
-        ` : ''}
-        ${state.waitingForVideo && state.mobileScreen !== 'P06' ? `
-          <button class="link-underline-btn" style="font-size:11.5px;" onclick="goToMobile('P06')">Ver espera</button>
-        ` : ''}
-      </div>
-    </div>
-  ` : '';
 
   return `
-    ${incomingVideoBanner}
-    ${waitingBanner}
     <div class="mobile-status-strip ${toneClass}">
-      <span>💻</span>
       <span><strong>Andrés:</strong> ${escapeHtml(state.agentLiveActivity)}</span>
+    </div>
+  `;
+}
+
+function renderMobileFloatingDock() {
+  const showScreens = ['P03', 'P04', 'P05', 'P06', 'P07', 'P08', 'P09', 'E01', 'E02', 'E03'];
+  const videos = state.sentVideosHistory || [];
+  if (!state.isLinked && videos.length === 0) return '';
+  if (!showScreens.includes(state.mobileScreen)) return '';
+
+  const unwatchedCount = videos.filter(v => !v.watched).length;
+  const isExpanded = Boolean(state.mobileNewVideoAlert);
+  const displayCount = unwatchedCount > 0 ? unwatchedCount : videos.length;
+
+  return `
+    <div class="mobile-floating-dock">
+      ${state.mobileVideoInboxOpen ? `
+        <div class="floating-dock-panel">
+          <div class="floating-dock-header">
+            <h4>Videos recibidos (${videos.length})</h4>
+            <button style="background:none;border:none;font-size:16px;font-weight:800;color:var(--text-muted);cursor:pointer;" onclick="toggleMobileVideoWidget()">✕</button>
+          </div>
+          ${videos.length === 0 ? `
+            <div style="font-size:12.5px;color:var(--text-muted);padding:10px 4px;text-align:center;">
+              Aún no has recibido videos en esta sesión.
+            </div>
+          ` : [...videos].reverse().map(v => `
+            <button class="floating-dock-item ${!v.watched ? 'unread' : ''}" onclick="openReceivedVideoById('${escapeAttr(v.id)}')">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span class="floating-dock-badge">${!v.watched ? 'Nuevo' : 'Visto'}</span>
+                <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(v.time || '')}</span>
+              </div>
+              <div style="font-size:13px;font-weight:800;color:var(--navy-dark);line-height:1.3;">${escapeHtml(v.videoTitle)}</div>
+              <div style="font-size:12px;color:var(--text-muted);line-height:1.3;">Pregunta: ${escapeHtml(v.question)}</div>
+            </button>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      <button
+        class="floating-orb-btn ${isExpanded ? 'is-expanded teal' : 'compact'}"
+        onclick="toggleMobileVideoWidget()"
+        title="Ver videos recibidos"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        ${isExpanded ? `<span class="floating-orb-label">Video recibido a pregunta</span>` : ''}
+        ${displayCount > 0 ? `<span class="floating-orb-count">${displayCount}</span>` : ''}
+      </button>
     </div>
   `;
 }
@@ -1593,6 +1701,7 @@ function renderMobilePane() {
       ${getPhoneStatusBarHTML(isHeroScreen)}
       <div class="phone-screen-body">
         ${renderMobileScreenContent()}
+        ${renderMobileFloatingDock()}
         ${renderMobileFlowModalIfActive()}
         ${renderMiniClipModalIfActive()}
       </div>
@@ -1629,7 +1738,7 @@ function renderMobileScreenContent() {
             Elige tu pregunta y recibe la respuesta en un video en LSC.
           </p>
 
-          <div class="p01-welcome-card" onclick="openMiniClip('Bienvenida en LSC', '0:20', '👋 ¡Hola! Bienvenido a la atención presencial accesible en LSC de la Universidad Icesi.')">
+          <div class="p01-welcome-card" onclick="openMiniClip('Bienvenida en LSC', '0:20', ' ¡Hola! Bienvenido a la atención presencial accesible en LSC de la Universidad Icesi.')">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1803,7 +1912,7 @@ function renderMobileScreenContent() {
 
           <div style="margin-top:auto;padding-top:20px;">
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
-              <span>💬</span> <span>No encuentro mi pregunta</span>
+              <span></span> <span>No encuentro mi pregunta</span>
             </button>
           </div>
         </div>
@@ -1845,7 +1954,7 @@ function renderMobileScreenContent() {
 
           <div style="margin-top:auto;padding-top:18px;">
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
-              <span>💬</span> <span>No encuentro mi pregunta</span>
+              <span></span> <span>No encuentro mi pregunta</span>
             </button>
           </div>
         </div>
@@ -1877,7 +1986,7 @@ function renderMobileScreenContent() {
             No tenemos un video para este tema. Puedes ver otra categoría o confirmar si deseas escribirle a Andrés por chat.
           </p>
 
-          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:22px;" onclick="openMiniClip('Mensaje en LSC', '0:15', '🔍 En este momento no tenemos un video pregrabado para esa pregunta. Si deseas, confirma para abrir el chat con Andrés.')">
+          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:22px;" onclick="openMiniClip('Mensaje en LSC', '0:15', ' En este momento no tenemos un video pregrabado para esa pregunta. Si deseas, confirma para abrir el chat con Andrés.')">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1898,7 +2007,7 @@ function renderMobileScreenContent() {
               Ver otras categorías
             </button>
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
-              <span>💬</span> <span>Escribir a Andrés (Confirmar)</span>
+              <span></span> <span>Escribir a Andrés (Confirmar)</span>
             </button>
             <button class="link-underline-btn" onclick="finishSessionBothSides()">
               Finalizar consulta
@@ -1942,11 +2051,11 @@ function renderMobileScreenContent() {
           <div style="margin-top:auto;display:flex;flex-direction:column;gap:12px;">
             ${isQueueMode ? `
               <button class="btn-primary" style="width:100%;padding:16px;" onclick="queueExtraQuestionFromMobile()">
-                <span>📥</span> <span>Dejar pregunta en cola</span>
+                <span></span> <span>Dejar pregunta en cola</span>
               </button>
             ` : `
               <button class="btn-primary" style="width:100%;padding:16px;" onclick="sendQuestionFromMobileToDesktop()">
-                <span>✈️</span> <span>Enviar pregunta</span>
+                <span></span> <span>Enviar pregunta</span>
               </button>
             `}
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="goToMobile('P04')">
@@ -2030,7 +2139,7 @@ function renderMobileScreenContent() {
           </p>
 
           <div style="display:inline-flex;align-items:center;gap:8px;background:var(--navy-dark);color:var(--white);padding:8px 16px;border-radius:999px;font-size:13px;font-weight:700;margin-bottom:14px;">
-            <span>🕒</span>
+            <span></span>
             <span>Esperando respuesta de Andrés</span>
           </div>
 
@@ -2046,7 +2155,7 @@ function renderMobileScreenContent() {
           ${queued.length > 0 ? `
             <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:16px;padding:12px 14px;text-align:left;margin-bottom:12px;">
               <div style="font-size:12.5px;font-weight:800;color:var(--teal-dark);margin-bottom:6px;">
-                📋 Preguntas en cola (${queued.length})
+                 Preguntas en cola (${queued.length})
               </div>
               <div style="display:flex;flex-direction:column;gap:6px;">
                 ${queued.map((item, idx) => `
@@ -2060,14 +2169,14 @@ function renderMobileScreenContent() {
           ` : ''}
 
           <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:14px;padding:11px 13px;display:flex;align-items:center;gap:10px;text-align:left;margin-top:auto;">
-            <span style="color:var(--purple-primary);font-weight:800;">⚠️</span>
+            <span style="color:var(--purple-primary);font-weight:800;"></span>
             <span style="font-size:12.5px;color:var(--text-muted);line-height:1.35;">
               Cuando Andrés envíe el video, te avisaremos aquí mismo.
             </span>
           </div>
 
           <button class="btn-primary" style="width:100%;margin-top:10px;justify-content:center;padding:13px;" onclick="browseExtraQuestionWhileWaiting()">
-            🔍 Buscar otra pregunta mientras espero
+             Buscar otra pregunta mientras espero
           </button>
 
           <button class="btn-outline" style="width:100%;margin-top:8px;justify-content:center;padding:12px;" onclick="promptNextQuestionChoiceModal()">
@@ -2158,13 +2267,13 @@ function renderMobileScreenContent() {
           ${(state.queuedQuestions || []).length > 0 ? `
             <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:14px;padding:11px 13px;margin-top:10px;text-align:left;">
               <div style="font-size:12px;font-weight:800;color:var(--teal-dark);margin-bottom:6px;">
-                📋 Tienes ${state.queuedQuestions.length} pregunta(s) en cola
+                 Tienes ${state.queuedQuestions.length} pregunta(s) en cola
               </div>
               <div style="font-size:12.5px;font-weight:700;color:var(--navy-dark);margin-bottom:8px;line-height:1.3;">
                 Siguiente: «${escapeHtml(state.queuedQuestions[0].question)}»
               </div>
               <button class="btn-primary" style="width:100%;padding:11px;font-size:13px;" onclick="sendNextQueuedQuestion()">
-                ✈️ Enviar siguiente pregunta en cola
+                 Enviar siguiente pregunta en cola
               </button>
             </div>
           ` : ''}
@@ -2238,13 +2347,13 @@ function renderMobileScreenContent() {
             ${(state.queuedQuestions || []).length > 0 ? `
               <div style="width:100%;background:var(--teal-light);border:1.5px solid var(--teal-primary);border-radius:16px;padding:12px 14px;text-align:left;">
                 <div style="font-size:12.5px;font-weight:800;color:var(--teal-dark);margin-bottom:4px;">
-                  📋 Siguiente en cola (${state.queuedQuestions.length})
+                   Siguiente en cola (${state.queuedQuestions.length})
                 </div>
                 <div style="font-size:13px;font-weight:700;color:var(--navy-dark);margin-bottom:8px;line-height:1.3;">
                   «${escapeHtml(state.queuedQuestions[0].question)}»
                 </div>
                 <button class="btn-primary" style="width:100%;padding:13px;font-size:14px;" onclick="sendNextQueuedQuestion()">
-                  ✈️ Enviar pregunta en cola
+                   Enviar pregunta en cola
                 </button>
               </div>
             ` : ''}
@@ -2252,7 +2361,7 @@ function renderMobileScreenContent() {
               Realizar otra pregunta
             </button>
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="promptConfirmChatModal()">
-              <span>💬</span> <span>Ir al chat con Andrés</span>
+              <span></span> <span>Ir al chat con Andrés</span>
             </button>
             <button class="btn-outline" style="width:100%;padding:15px;" onclick="finishSessionBothSides()">
               Finalizar atención
@@ -2288,7 +2397,7 @@ function renderMobileScreenContent() {
               onclick="downloadConsultationRecord()"
               title="Descargar conversación e información de videos recibidos en PDF"
             >
-              📥 Descargar PDF
+               Descargar PDF
             </button>
           </div>
 
@@ -2358,7 +2467,7 @@ function renderMobileScreenContent() {
             Gracias por visitar la Universidad Icesi.
           </p>
 
-          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:16px;" onclick="openMiniClip('Despedida en LSC', '0:15', '🤲 ¡Muchas gracias por tu visita a la Universidad Icesi! Siempre bienvenido.')">
+          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:16px;" onclick="openMiniClip('Despedida en LSC', '0:15', ' ¡Muchas gracias por tu visita a la Universidad Icesi! Siempre bienvenido.')">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -2379,7 +2488,7 @@ function renderMobileScreenContent() {
             style="width:100%;padding:14px;margin-bottom:10px;font-size:14.5px;"
             onclick="downloadConsultationRecord()"
           >
-            <span>📥</span> <span>Descargar PDF (chat e info de videos)</span>
+            <span></span> <span>Descargar PDF (chat e info de videos)</span>
           </button>
 
           <button class="link-underline-btn" style="font-size:13.5px;" onclick="resetToNewSession()">
@@ -2409,7 +2518,7 @@ function renderMobileFlowModalIfActive() {
       <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
         <div class="phone-modal-sheet" onclick="event.stopPropagation()">
           <div class="status-circle purple" style="width:58px;height:58px;margin-bottom:4px;">
-            <span style="font-size:24px;">💬</span>
+            <span style="font-size:24px;"></span>
           </div>
           <h3>¿Deseas entrar al chat con Andrés?</h3>
           <p>
@@ -2422,7 +2531,7 @@ function renderMobileFlowModalIfActive() {
 
           ${state.mobileScreen !== 'E02' ? `
             <button class="btn-outline" style="width:100%;padding:13px;font-size:14px;" onclick="openE02FromChatPrompt()">
-              🤟 Ver aviso en LSC (Pregunta no disponible)
+               Ver aviso en LSC (Pregunta no disponible)
             </button>
           ` : ''}
 
@@ -2440,7 +2549,7 @@ function renderMobileFlowModalIfActive() {
       <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
         <div class="phone-modal-sheet" onclick="event.stopPropagation()">
           <div class="status-circle purple" style="width:58px;height:58px;margin-bottom:4px;">
-            <span style="font-size:24px;">❓</span>
+            <span style="font-size:24px;"></span>
           </div>
           <h3>¿Dónde quieres hacer tu pregunta?</h3>
           <p>
@@ -2449,7 +2558,7 @@ function renderMobileFlowModalIfActive() {
 
           <button class="choice-card-btn" onclick="chooseAnotherQuestionSameCategory()">
             <div>
-              <span class="choice-card-title">📌 Misma categoría: ${escapeHtml(cat.name)}</span>
+              <span class="choice-card-title"> Misma categoría: ${escapeHtml(cat.name)}</span>
               <span class="choice-card-sub">Elegir otra pregunta sobre este mismo tema (Paso 2 de 3)</span>
             </div>
             <span style="font-size:22px;color:var(--purple-primary);font-weight:800;">›</span>
@@ -2457,7 +2566,7 @@ function renderMobileFlowModalIfActive() {
 
           <button class="choice-card-btn secondary" onclick="chooseAnotherQuestionAllCategories()">
             <div>
-              <span class="choice-card-title">📂 Ir al apartado de categorías</span>
+              <span class="choice-card-title"> Ir al apartado de categorías</span>
               <span class="choice-card-sub">Cambiar a otro tema diferente (Paso 1 de 3)</span>
             </div>
             <span style="font-size:22px;color:var(--purple-primary);font-weight:800;">›</span>
@@ -2478,7 +2587,7 @@ function renderMobileFlowModalIfActive() {
       <div class="phone-modal-backdrop" onclick="closeMobileFlowModal()">
         <div class="phone-modal-sheet" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto;text-align:left;">
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px;">
-            <h3 style="margin:0;font-size:18px;">🎬 Videos recibidos (${videos.length})</h3>
+            <h3 style="margin:0;font-size:18px;"> Videos recibidos (${videos.length})</h3>
             <button style="background:none;border:none;font-size:18px;font-weight:800;color:var(--text-muted);cursor:pointer;" onclick="closeMobileFlowModal()">✕</button>
           </div>
           <p style="margin-top:0;margin-bottom:12px;font-size:13px;">
@@ -2661,7 +2770,7 @@ function fillPinAndLink(pinStr) {
 async function attemptPinLink() {
   const entered = (state.enteredPin || []).join('').trim();
   if (entered.length !== 4) {
-    showLiveToast('Por favor ingresa los 4 dígitos del PIN del celular.', '⚠️');
+    showLiveToast('Por favor ingresa los 4 dígitos del PIN del celular.', '');
     return;
   }
 
@@ -2689,7 +2798,7 @@ async function attemptPinLink() {
       desktopScreen: 'A03',
       mobileScreen: (state.mobileScreen === 'P01' || state.mobileScreen === 'P02' || state.mobileScreen === 'E04') ? 'P03' : state.mobileScreen
     });
-    showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`, '✅');
+    showLiveToast(`¡Dispositivo vinculado con PIN ${entered}!`, '');
     return;
   }
 
@@ -2746,7 +2855,7 @@ function simulateInvalidPin(customDigits) {
     desktopScreen: 'AE01',
     mobileScreen: state.viewMode === 'split' ? 'E04' : state.mobileScreen
   });
-  showLiveToast('Error: El código PIN ingresado no es válido', '❌');
+  showLiveToast('Error: El código PIN ingresado no es válido', '');
 }
 
 function retryValidPinFromError() {
@@ -2771,7 +2880,7 @@ function regenerateMobilePin() {
     isLinked: false,
     mobileScreen: 'P02'
   });
-  showLiveToast(`Nuevo PIN generado: ${newPin}`, '🔑');
+  showLiveToast(`Nuevo PIN generado: ${newPin}`, '');
 }
 
 function proceedFromMobilePin() {
@@ -2826,24 +2935,70 @@ function selectQuestionOnMobile(questionText) {
   });
 }
 
+function toggleDesktopQueueWidget() {
+  saveAndSyncState({
+    desktopQueuePanelOpen: !state.desktopQueuePanelOpen,
+    desktopNewQuestionAlert: false
+  }, false);
+}
+
+function selectQuestionFromDesktopWidget(qId) {
+  const item = (state.receivedQuestionsList || []).find(q => q.id === qId);
+  if (!item) return;
+
+  saveAndSyncState({
+    activeQuestionId: item.id,
+    selectedCategoryId: item.categoryId,
+    selectedVideoId: item.categoryId,
+    selectedQuestion: item.question,
+    desktopQueuePanelOpen: false,
+    desktopNewQuestionAlert: false,
+    desktopScreen: 'A04',
+    agentLiveActivity: 'Revisando la pregunta seleccionada y su video LSC...'
+  });
+}
+
+function toggleMobileVideoWidget() {
+  saveAndSyncState({
+    mobileVideoInboxOpen: !state.mobileVideoInboxOpen,
+    mobileNewVideoAlert: false
+  }, false);
+}
+
 function sendQuestionFromMobileToDesktop() {
+  const catObj = CATEGORIES_DATA[state.selectedCategoryId] || CATEGORIES_DATA.programas;
+  const qId = 'pq-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
   dispatchCloudEvent({
     type: 'VISITOR_QUESTION',
+    questionId: qId,
     categoryId: state.selectedCategoryId,
     question: state.selectedQuestion
   });
+
+  const nextList = state.viewMode === 'split'
+    ? [...(state.receivedQuestionsList || []), {
+        id: qId,
+        categoryId: catObj.id,
+        categoryName: catObj.name,
+        question: state.selectedQuestion,
+        time: getCurrentTimeFormatted(),
+        status: 'pending'
+      }]
+    : state.receivedQuestionsList;
 
   saveAndSyncState({
     isLinked: true,
     waitingForVideo: true,
     selectedVideoId: state.selectedCategoryId,
+    receivedQuestionsList: nextList,
+    desktopNewQuestionAlert: state.viewMode === 'split' ? true : state.desktopNewQuestionAlert,
     visitorLiveActivity: 'Esperando tu respuesta en video LSC',
-    agentLiveActivity: '¡Recibió tu pregunta! Revisando el video LSC sugerido...',
+    agentLiveActivity: 'Recibió una pregunta de Patricia en la lista',
     mobileScreen: 'P06',
-    desktopScreen: 'A04',
     mobileFlowModal: null
   });
-  showLiveToast('Pregunta enviada al computador de Andrés', '✈️');
+  showLiveToast('Pregunta enviada a Andrés');
 }
 
 function browseExtraQuestionWhileWaiting() {
@@ -2853,7 +3008,7 @@ function browseExtraQuestionWhileWaiting() {
     mobileFlowModal: null,
     visitorLiveActivity: 'Esperando video · Buscando pregunta extra en cola'
   });
-  showLiveToast('Busca otra pregunta y déjala en cola mientras llega tu video.', '🔍');
+  showLiveToast('Busca otra pregunta y déjala en cola mientras llega tu video.', '');
 }
 
 function queueExtraQuestionFromMobile() {
@@ -2883,7 +3038,7 @@ function queueExtraQuestionFromMobile() {
     mobileFlowModal: null,
     visitorLiveActivity: activityText
   });
-  showLiveToast(`Pregunta guardada en cola (${nextQueue.length} en espera)`, '📥');
+  showLiveToast(`Pregunta guardada en cola (${nextQueue.length} en espera)`, '');
 }
 
 function removeQueuedQuestion(id) {
@@ -2894,7 +3049,7 @@ function removeQueuedQuestion(id) {
     notify: false
   });
   saveAndSyncState({ queuedQuestions: nextQueue });
-  showLiveToast('Pregunta quitada de la cola', '🗑️');
+  showLiveToast('Pregunta quitada de la cola', '');
 }
 
 function openVideosInboxModal() {
@@ -2925,6 +3080,8 @@ function openReceivedVideoById(recordId) {
     selectedQuestion: target.question,
     mobileScreen: 'P07',
     mobileFlowModal: null,
+    mobileVideoInboxOpen: false,
+    mobileNewVideoAlert: false,
     videoPlaying: true,
     videoCurrentTime: 0,
     visitorLiveActivity: 'Reproduciendo el video LSC en su celular'
@@ -2936,8 +3093,12 @@ function sendNextQueuedQuestion() {
   if (currentQueue.length === 0) return;
 
   const [nextItem, ...restQueue] = currentQueue;
+  const qId = 'pq-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  const catObj = CATEGORIES_DATA[nextItem.categoryId] || CATEGORIES_DATA.programas;
+
   dispatchCloudEvent({
     type: 'VISITOR_QUESTION',
+    questionId: qId,
     categoryId: nextItem.categoryId,
     question: nextItem.question
   });
@@ -2947,6 +3108,17 @@ function sendNextQueuedQuestion() {
     notify: false
   });
 
+  const nextList = state.viewMode === 'split'
+    ? [...(state.receivedQuestionsList || []), {
+        id: qId,
+        categoryId: catObj.id,
+        categoryName: catObj.name,
+        question: nextItem.question,
+        time: getCurrentTimeFormatted(),
+        status: 'pending'
+      }]
+    : state.receivedQuestionsList;
+
   saveAndSyncState({
     isLinked: true,
     waitingForVideo: true,
@@ -2954,13 +3126,14 @@ function sendNextQueuedQuestion() {
     selectedVideoId: nextItem.categoryId,
     selectedQuestion: nextItem.question,
     queuedQuestions: restQueue,
+    receivedQuestionsList: nextList,
+    desktopNewQuestionAlert: state.viewMode === 'split' ? true : state.desktopNewQuestionAlert,
     visitorLiveActivity: 'Esperando tu respuesta en video LSC',
-    agentLiveActivity: '¡Recibió tu pregunta en cola! Revisando el video LSC...',
+    agentLiveActivity: 'Recibió tu pregunta en cola',
     mobileScreen: 'P06',
-    desktopScreen: 'A04',
     mobileFlowModal: null
   });
-  showLiveToast('Siguiente pregunta de la cola enviada a Andrés', '✈️');
+  showLiveToast('Siguiente pregunta de la cola enviada a Andrés');
 }
 
 // Opciones al querer hacer otra pregunta (Misma categoría vs. Apartado de categorías)
@@ -2978,7 +3151,7 @@ function chooseAnotherQuestionSameCategory() {
     visitorLiveActivity: `Eligiendo otra pregunta en «${cat.name}» (Paso 2 de 3)`,
     agentLiveActivity: `Esperando tu nueva pregunta de «${cat.name}»`
   });
-  showLiveToast(`Viendo otras preguntas de «${cat.name}»`, '📌');
+  showLiveToast(`Viendo otras preguntas de «${cat.name}»`, '');
 }
 
 function chooseAnotherQuestionAllCategories() {
@@ -2993,7 +3166,7 @@ function chooseAnotherQuestionAllCategories() {
     visitorLiveActivity: 'Explorando el apartado de categorías (Paso 1 de 3)',
     agentLiveActivity: 'Esperando que selecciones una categoría y pregunta'
   });
-  showLiveToast('Volviste al apartado de categorías', '📂');
+  showLiveToast('Volviste al apartado de categorías', '');
 }
 
 // Flujo de Biblioteca y Envío de Video en LSC (Computador -> Celular)
@@ -3056,11 +3229,16 @@ function buildSentVideoRecord(videoId, categoryId, question, opts = {}) {
 }
 
 function sendVideoToVisitorPhone() {
-  const isBrowsingExtraSplit = state.viewMode === 'split' && ['P03', 'P04', 'P05', 'E02'].includes(state.mobileScreen);
   const record = buildSentVideoRecord(state.selectedVideoId, state.selectedCategoryId, state.selectedQuestion, {
-    watched: !isBrowsingExtraSplit
+    watched: false
   });
   const nextHistory = [...(state.sentVideosHistory || []), record];
+  const updatedQuestions = (state.receivedQuestionsList || []).map(q =>
+    (state.activeQuestionId && q.id === state.activeQuestionId) || (!state.activeQuestionId && q.question === state.selectedQuestion && q.status !== 'answered')
+      ? { ...q, status: 'answered' }
+      : q
+  );
+  const hasMorePending = updatedQuestions.some(q => q.status !== 'answered');
 
   dispatchCloudEvent({
     type: 'SEND_LSC_VIDEO',
@@ -3072,22 +3250,17 @@ function sendVideoToVisitorPhone() {
 
   saveAndSyncState({
     desktopScreen: 'A07',
-    mobileScreen: isBrowsingExtraSplit ? state.mobileScreen : 'P07',
     mobileFlowModal: null,
     waitingForVideo: false,
     sentVideosHistory: nextHistory,
-    videoPlaying: true,
-    videoCurrentTime: 0,
+    receivedQuestionsList: updatedQuestions,
+    desktopNewQuestionAlert: hasMorePending,
+    mobileNewVideoAlert: state.viewMode === 'split' ? true : state.mobileNewVideoAlert,
     desktopPreviewPlaying: false,
-    agentLiveActivity: 'Te envió el video en LSC · Atento por si tienes otra consulta',
-    visitorLiveActivity: isBrowsingExtraSplit ? 'Video recibido · Buscando pregunta extra' : 'Reproduciendo el video LSC en su celular'
+    agentLiveActivity: 'Te envió el video en LSC · Disponible abajo a la derecha',
+    visitorLiveActivity: 'Video disponible para ver en su celular'
   });
-  showLiveToast(
-    isBrowsingExtraSplit
-      ? '¡Video enviado! Patricia recibió el aviso arriba mientras busca otra pregunta.'
-      : '¡Video en LSC enviado y reproduciéndose en el celular!',
-    '🎬'
-  );
+  showLiveToast('Video en LSC enviado al celular de Patricia');
 }
 
 // Controles del reproductor de video en el celular (P07)
@@ -3135,7 +3308,7 @@ function confirmAndEnterDirectChat() {
       ? 'En el chat activo contigo · Listo para responderte'
       : 'Recibió tu solicitud de chat · Abriendo conversación...'
   });
-  showLiveToast('Chat con Andrés iniciado. Se notificó a su computador.', '💬');
+  showLiveToast('Chat con Andrés iniciado. Se notificó a su computador.', '');
 }
 
 function openBothChats() {
@@ -3149,7 +3322,7 @@ function openBothChats() {
     mobileFlowModal: null,
     agentLiveActivity: 'En el chat activo contigo · Listo para responderte'
   });
-  showLiveToast('Chat directo abierto con la persona visitante', '💬');
+  showLiveToast('Chat directo abierto con la persona visitante', '');
 }
 
 function handleMobileDraftInput(val) {
@@ -3211,7 +3384,136 @@ function handleDesktopChatSubmit(event) {
     agentLiveActivity: 'Te acaba de responder en el chat',
     mobileScreen: 'P09'
   });
-  showLiveToast('Respuesta enviada al celular de la visitante', '✓');
+  showLiveToast('Respuesta enviada al celular de la visitante');
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result || '');
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function toggleGeminiVoiceRecording() {
+  if (isTranscribingGemini) return;
+
+  if (isRecordingGeminiVoice && geminiMediaRecorder) {
+    isRecordingGeminiVoice = false;
+    isTranscribingGemini = true;
+    renderApp();
+    try {
+      geminiMediaRecorder.stop();
+    } catch (err) {
+      isTranscribingGemini = false;
+      renderApp();
+    }
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showLiveToast('Tu navegador no permite acceso al micrófono en esta vista.');
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    geminiAudioChunks = [];
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+    geminiMediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+
+    geminiMediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) geminiAudioChunks.push(e.data);
+    };
+
+    geminiMediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      try {
+        const audioBlob = new Blob(geminiAudioChunks, { type: geminiMediaRecorder.mimeType || 'audio/webm' });
+        const audioBase64 = await blobToBase64(audioBlob);
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'audio',
+            audioBase64,
+            mimeType: audioBlob.type || 'audio/webm',
+            contextQuestion: state.selectedQuestion
+          })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.text) {
+          showLiveToast(data.message || 'No se pudo transcribir el audio con Gemini.');
+        } else {
+          const prev = (state.desktopDraftMsg || '').trim();
+          const nextDraft = prev ? `${prev} ${data.text}` : data.text;
+          state.desktopDraftMsg = nextDraft;
+          showLiveToast('Audio transcrito con Gemini. Revísalo y envía.');
+        }
+      } catch (err) {
+        showLiveToast('Error al conectar con el servicio de transcripción Gemini.');
+      } finally {
+        isTranscribingGemini = false;
+        isRecordingGeminiVoice = false;
+        renderApp();
+        const inputEl = document.getElementById('desktop-chat-input');
+        if (inputEl) inputEl.focus();
+      }
+    };
+
+    geminiMediaRecorder.start();
+    isRecordingGeminiVoice = true;
+    renderApp();
+    showLiveToast('Grabando voz... Presiona nuevamente para transcribir con Gemini.');
+  } catch (err) {
+    isRecordingGeminiVoice = false;
+    isTranscribingGemini = false;
+    renderApp();
+    showLiveToast('Permiso de micrófono denegado o no disponible.');
+  }
+}
+
+async function rewriteDraftWithGemini() {
+  const raw = (state.desktopDraftMsg || '').trim();
+  if (!raw) {
+    showLiveToast('Escribe unas palabras o notas primero para redactarlas con Gemini.');
+    return;
+  }
+  if (isTranscribingGemini || isRecordingGeminiVoice) return;
+
+  isTranscribingGemini = true;
+  renderApp();
+
+  try {
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'rewrite',
+        text: raw,
+        contextQuestion: state.selectedQuestion
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.text) {
+      showLiveToast(data.message || 'No se pudo redactar el texto con Gemini.');
+    } else {
+      state.desktopDraftMsg = data.text;
+      showLiveToast('Texto mejorado con Gemini. Revísalo y envía.');
+    }
+  } catch (err) {
+    showLiveToast('Error al conectar con Gemini.');
+  } finally {
+    isTranscribingGemini = false;
+    renderApp();
+    const inputEl = document.getElementById('desktop-chat-input');
+    if (inputEl) inputEl.focus();
+  }
 }
 
 function finishSessionBothSides() {
@@ -3227,7 +3529,7 @@ function finishSessionBothSides() {
     desktopScreen: 'A08',
     mobileScreen: 'P10'
   });
-  showLiveToast('Atención finalizada correctamente', '✅');
+  showLiveToast('Atención finalizada correctamente', '');
 }
 
 function resetToNewSession() {
@@ -3277,6 +3579,12 @@ function resetToNewSession() {
     waitingForVideo: false,
     queuedQuestions: [],
     incomingVideoAlert: null,
+    receivedQuestionsList: [],
+    activeQuestionId: null,
+    desktopQueuePanelOpen: false,
+    desktopNewQuestionAlert: false,
+    mobileVideoInboxOpen: false,
+    mobileNewVideoAlert: false,
     mobileDraftMsg: '',
     desktopDraftMsg: '',
     videoCurrentTime: 0,
@@ -3317,7 +3625,7 @@ function downloadConsultationRecord() {
   const messages = state.chatMessages || [];
 
   if (!window.jspdf || !window.jspdf.jsPDF) {
-    showLiveToast('No se pudo cargar el generador PDF. Verifica tu conexión.', '⚠️');
+    showLiveToast('No se pudo cargar el generador PDF. Verifica tu conexión.', '');
     return;
   }
 
@@ -3437,7 +3745,7 @@ function downloadConsultationRecord() {
   }
 
   doc.save(`tuSolucionLSC-consulta-PIN-${state.sessionPin}.pdf`);
-  showLiveToast('PDF con chat e información de videos descargado', '📥');
+  showLiveToast('PDF con chat e información de videos descargado', '');
 }
 
 function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
@@ -3482,7 +3790,7 @@ function downloadSimulatedVideoHtmlFallback(videoObj, questionText) {
     <h2 style="margin:0 0 8px;">${escapeHtml(videoObj.videoTitle)} (${escapeHtml(videoObj.duration)})</h2>
     <p style="color:#5F5C78;margin:0 0 16px;"><strong>Pregunta:</strong> ${escapeHtml(questionText)}</p>
     <div class="player">
-      <div style="font-size:38px;margin-bottom:8px;">🤟</div>
+      <div style="font-size:38px;margin-bottom:8px;"></div>
       <div style="font-weight:800;font-size:17px;margin-bottom:10px;">Simulación de Respuesta en LSC</div>
       ${videoObj.lscCaptions.map(c => `<div style="background:rgba(24,20,64,0.65);padding:8px 12px;border-radius:10px;margin-bottom:6px;font-size:13px;">${escapeHtml(c)}</div>`).join('')}
     </div>
@@ -3493,7 +3801,7 @@ function downloadSimulatedVideoHtmlFallback(videoObj, questionText) {
 </html>`;
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   triggerBrowserBlobDownload(blob, `${videoObj.id}-LSC-tuSolucionLSC.html`);
-  showLiveToast('Video interactivo descargado en tu dispositivo', '📥');
+  showLiveToast('Video interactivo descargado en tu dispositivo', '');
 }
 
 function downloadSimulatedLscVideo() {
@@ -3542,7 +3850,7 @@ function downloadSimulatedLscVideo() {
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
       const blob = new Blob(chunks, { type: mimeType });
       triggerBrowserBlobDownload(blob, `Video-LSC-${videoObj.id}.${ext}`);
-      showLiveToast(`Video descargado (${videoObj.videoTitle}.${ext})`, '📥');
+      showLiveToast(`Video descargado (${videoObj.videoTitle}.${ext})`, '');
       renderApp();
     };
 
@@ -3593,7 +3901,7 @@ function downloadSimulatedLscVideo() {
       ctx.font = '76px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('🤟', 0, 4);
+      ctx.fillText('', 0, 4);
       ctx.restore();
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';

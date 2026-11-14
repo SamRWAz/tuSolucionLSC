@@ -1662,5 +1662,224 @@ button, input, textarea {
   display: block;
 }
 
+/* ==========================================================================
+   Bolita flotante expandible (Cola de preguntas en Andrés / Videos en Patricia)
+   ========================================================================== */
+
+.desktop-floating-dock {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 950;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.mobile-floating-dock {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 65;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.floating-orb-btn {
+  height: 52px;
+  min-width: 52px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 2px solid var(--white);
+  background: var(--navy-dark);
+  color: var(--white);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(24, 20, 64, 0.28);
+  transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+
+.floating-orb-btn.compact {
+  width: 52px;
+  padding: 0;
+}
+
+.floating-orb-btn.is-expanded {
+  border-radius: 16px;
+  padding: 0 18px;
+  background: var(--purple-primary);
+  border-color: var(--white);
+  max-width: 280px;
+}
+
+.floating-orb-btn.is-expanded.teal {
+  background: var(--teal-dark);
+}
+
+.floating-orb-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(81, 48, 217, 0.34);
+}
+
+.floating-orb-count {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--teal-primary);
+  color: var(--navy-darker);
+  font-size: 11.5px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.floating-orb-btn.compact .floating-orb-count {
+  position: absolute;
+  top: -5px;
+  right: -4px;
+  border: 2px solid var(--white);
+}
+
+.floating-orb-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.floating-dock-panel {
+  width: 330px;
+  max-width: calc(100vw - 40px);
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--white);
+  border: 1.5px solid var(--border-light);
+  border-radius: 20px;
+  box-shadow: 0 18px 44px rgba(24, 20, 64, 0.22);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-floating-dock .floating-dock-panel {
+  width: 295px;
+  max-height: 320px;
+}
+
+.floating-dock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.floating-dock-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--navy-dark);
+}
+
+.floating-dock-item {
+  width: 100%;
+  text-align: left;
+  background: #FAF9FE;
+  border: 1.5px solid var(--border-light);
+  border-radius: 14px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.floating-dock-item:hover {
+  border-color: var(--purple-primary);
+  background: var(--purple-light);
+}
+
+.floating-dock-item.unread {
+  border-color: var(--teal-primary);
+  background: var(--teal-light);
+}
+
+.floating-dock-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--purple-light);
+  color: var(--purple-primary);
+}
+
+.floating-dock-item.unread .floating-dock-badge {
+  background: var(--teal-primary);
+  color: var(--white);
+}
+
+/* Botones de dictado y redacción Gemini en chat de Andrés */
+.gemini-tools-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.gemini-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--border-light);
+  background: var(--white);
+  color: var(--navy-dark);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.gemini-action-btn:hover:not(:disabled) {
+  border-color: var(--purple-primary);
+  background: var(--purple-light);
+}
+
+.gemini-action-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.gemini-action-btn.recording {
+  background: var(--danger-bg);
+  border-color: var(--danger-text);
+  color: var(--danger-text);
+  animation: geminiPulse 1.2s infinite;
+}
+
+@keyframes geminiPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(196, 37, 74, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(196, 37, 74, 0); }
+}
+
 
 
