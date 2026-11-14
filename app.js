@@ -557,9 +557,6 @@ function processIncomingCloudEvent(ev) {
 
     case 'MOBILE_STATUS_UPDATE': {
       const desc = getVisitorStatusDescription(ev.mobileScreen, ev.categoryId || state.selectedCategoryId);
-      if (ev.toastForAgent) {
-        showLiveToast(ev.toastForAgent, '');
-      }
       saveAndSyncState({
         visitorLiveActivity: desc,
         selectedCategoryId: ev.categoryId || state.selectedCategoryId
@@ -569,9 +566,6 @@ function processIncomingCloudEvent(ev) {
 
     case 'DESKTOP_STATUS_UPDATE': {
       const desc = getAgentStatusDescription(ev.desktopScreen, ev.videoId || state.selectedVideoId);
-      if (ev.toastForVisitor) {
-        showLiveToast(ev.toastForVisitor, '');
-      }
       saveAndSyncState({
         agentLiveActivity: desc
       });
@@ -1631,17 +1625,7 @@ function renderDesktopQueueBanner() {
 // ============================================================================
 
 function renderMobileLiveStatusStrip() {
-  const showStripScreens = ['P03', 'P04', 'P05', 'P06', 'P07', 'P08', 'P09'];
-  if (!state.isLinked || !showStripScreens.includes(state.mobileScreen)) return '';
-
-  const isVideoReady = state.desktopScreen === 'A07' || state.mobileScreen === 'P07';
-  const toneClass = isVideoReady ? 'tone-teal' : '';
-
-  return `
-    <div class="mobile-status-strip ${toneClass}">
-      <span><strong>Andrés:</strong> ${escapeHtml(state.agentLiveActivity)}</span>
-    </div>
-  `;
+  return '';
 }
 
 function renderMobileFloatingDock() {
@@ -1700,7 +1684,9 @@ function renderMobilePane() {
     <div class="phone-frame">
       ${getPhoneStatusBarHTML(isHeroScreen)}
       <div class="phone-screen-body">
-        ${renderMobileScreenContent()}
+        <div class="phone-scroll-area">
+          ${renderMobileScreenContent()}
+        </div>
         ${renderMobileFloatingDock()}
         ${renderMobileFlowModalIfActive()}
         ${renderMiniClipModalIfActive()}
