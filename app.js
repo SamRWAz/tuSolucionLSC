@@ -126,6 +126,7 @@ const DEFAULT_STATE = {
   activeQuestionId: null,
   desktopQueuePanelOpen: false,
   desktopNewQuestionAlert: false,
+  previousDesktopScreen: 'A03',
   mobileVideoInboxOpen: false,
   mobileNewVideoAlert: false,
   mobileDraftMsg: '',
@@ -924,6 +925,9 @@ function renderDesktopFloatingDock() {
               </div>
               <div style="font-size:12px;font-weight:700;color:var(--purple-primary);">${escapeHtml(item.categoryName)}</div>
               <div style="font-size:13px;font-weight:800;color:var(--navy-dark);line-height:1.3;">${escapeHtml(item.question)}</div>
+              <div style="font-size:11.5px;font-weight:700;color:var(--teal-dark);margin-top:2px;">
+                Clic aquí para buscar y enviar video →
+              </div>
             </button>
           `).join('')}
         </div>
@@ -932,12 +936,12 @@ function renderDesktopFloatingDock() {
       <button
         class="floating-orb-btn ${isExpanded ? 'is-expanded' : 'compact'}"
         onclick="toggleDesktopQueueWidget()"
-        title="Ver preguntas de Patricia"
+        title="Ver preguntas de Patricia y enviar video"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
-        ${isExpanded ? `<span class="floating-orb-label">Pregunta de Patricia</span>` : ''}
+        ${isExpanded ? `<span class="floating-orb-label">Pregunta de Patricia · Clic para responder</span>` : ''}
         ${displayCount > 0 ? `<span class="floating-orb-count">${displayCount}</span>` : ''}
       </button>
     </div>
@@ -954,12 +958,15 @@ function renderDesktopPane() {
         <div class="brand-divider"></div>
         <span class="brand-panel-label">Panel de Andrés</span>
       </div>
-      <div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         ${showLinkedPill ? `
           <div class="session-linked-pill">
             <span>Sesión vinculada · PIN ${state.sessionPin}</span>
           </div>
         ` : ''}
+        <button class="btn-outline" style="padding:7px 14px;font-size:12.5px;" onclick="resetToNewSession()">
+          Iniciar nueva sesión
+        </button>
       </div>
     </div>
     <div class="desktop-content">
@@ -1038,12 +1045,14 @@ function renderDesktopScreenContent() {
             ${[0, 1, 2, 3].map(idx => `
               <input
                 type="text"
-                maxlength="1"
+                maxlength="4"
                 inputmode="numeric"
+                autocomplete="one-time-code"
                 class="pin-digit-input"
                 id="pin-input-${idx}"
                 value="${state.enteredPin[idx] || ''}"
                 placeholder="•"
+                onfocus="this.select()"
                 oninput="handlePinDigitInput(${idx}, this.value)"
                 onkeydown="handlePinKeyDown(event, ${idx})"
               />
@@ -1059,14 +1068,16 @@ function renderDesktopScreenContent() {
             </button>
           </div>
 
-          <div style="margin-top:14px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
-            <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('4829')">
-              Usar PIN por defecto (4829)
-            </button>
-            <button class="link-underline-btn" style="font-size:12.5px;color:#C4254A;" onclick="simulateInvalidPin()">
-              Simular PIN incorrecto (4805 → AE01)
-            </button>
-          </div>
+          ${state.viewMode === 'split' ? `
+            <div style="margin-top:14px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
+              <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('4829')">
+                Usar PIN por defecto (4829)
+              </button>
+              <button class="link-underline-btn" style="font-size:12.5px;color:#C4254A;" onclick="simulateInvalidPin()">
+                Simular PIN incorrecto (4805 → AE01)
+              </button>
+            </div>
+          ` : ''}
 
           <div class="info-footnote">
             <div class="info-footnote-icon">i</div>
@@ -1141,21 +1152,48 @@ function renderDesktopQueueBanner() {
   `;
 }
 
-    case 'A03':
+    case 'A03': {
+      const pendingQuestions = (state.receivedQuestionsList || []).filter(q => q.status !== 'answered');
       return `
         ${renderDesktopQueueBanner()}
-        <div class="a03-waiting-box">
-          <div class="dots-pill">
-            <span></span><span></span><span></span>
+        ${pendingQuestions.length > 0 ? `
+          <div class="a03-waiting-box" style="border:2px solid var(--purple-primary);background:var(--purple-light);">
+            <div class="pill-tag navy">PREGUNTAS DE PATRICIA POR RESPONDER (${pendingQuestions.length})</div>
+            <h2>Tienes ${pendingQuestions.length === 1 ? 'una pregunta nueva' : `${pendingQuestions.length} preguntas`} de Patricia</h2>
+            <p style="margin-bottom:16px;">
+              Haz clic en la pregunta que quieres atender para revisar el video sugerido o buscar otro en la biblioteca y enviárselo.
+            </p>
+            <div style="display:flex;flex-direction:column;gap:10px;width:100%;max-width:620px;margin:0 auto 16px;">
+              ${pendingQuestions.map(q => `
+                <div style="background:var(--white);border:1.5px solid var(--border-light);border-radius:16px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left;flex-wrap:wrap;">
+                  <div style="flex:1;min-width:200px;">
+                    <div style="font-size:11.5px;font-weight:800;color:var(--purple-primary);text-transform:uppercase;margin-bottom:3px;">${escapeHtml(q.categoryName)} · ${escapeHtml(q.time || '')}</div>
+                    <div style="font-size:15.5px;font-weight:800;color:var(--navy-dark);">«${escapeHtml(q.question)}»</div>
+                  </div>
+                  <button class="btn-primary" style="padding:10px 18px;font-size:13.5px;flex-shrink:0;" onclick="selectQuestionFromDesktopWidget('${escapeAttr(q.id)}')">
+                    Responder con video →
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+            <button class="btn-outline" style="padding:10px 22px;font-size:13.5px;" onclick="openDesktopPinScreen()">
+              Cambiar código PIN
+            </button>
           </div>
-          <h2>Esperando consulta de la persona visitante...</h2>
-          <p>
-            La persona visitante está eligiendo una categoría y su pregunta en el celular. Cuando la envíe, aparecerá aquí automáticamente.
-          </p>
-          <button class="btn-outline" style="padding:11px 24px;font-size:14px;" onclick="openDesktopPinScreen()">
-            Cambiar código PIN
-          </button>
-        </div>
+        ` : `
+          <div class="a03-waiting-box">
+            <div class="dots-pill">
+              <span></span><span></span><span></span>
+            </div>
+            <h2>Esperando consulta de la persona visitante...</h2>
+            <p>
+              La persona visitante está eligiendo una categoría y su pregunta en el celular. Cuando la envíe, aparecerá aquí y en el botón de abajo a la derecha.
+            </p>
+            <button class="btn-outline" style="padding:11px 24px;font-size:14px;" onclick="openDesktopPinScreen()">
+              Cambiar código PIN
+            </button>
+          </div>
+        `}
 
         <h3 class="section-heading">Categorías disponibles en la biblioteca de videos en LSC</h3>
         <div class="a03-cat-grid">
@@ -1173,12 +1211,18 @@ function renderDesktopQueueBanner() {
           `).join('')}
         </div>
       `;
+    }
 
     // ------------------------------------------------------------------------
     // A04 · Nueva pregunta recibida
     // ------------------------------------------------------------------------
     case 'A04':
       return `
+        <div style="margin-bottom:14px;">
+          <button class="btn-outline" style="padding:8px 16px;font-size:13px;" onclick="goToDesktop('A03')">
+            ← Volver a espera / preguntas
+          </button>
+        </div>
         ${renderDesktopQueueBanner()}
         <div class="question-header-card">
           <div class="question-badges-row">
@@ -1243,6 +1287,13 @@ function renderDesktopQueueBanner() {
         : allVideos.filter(v => v.id === state.libraryFilter);
 
       return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <button class="btn-outline" style="padding:8px 16px;font-size:13px;" onclick="goBackFromLibrary()">
+            ← Volver
+          </button>
+          <span style="font-size:13px;font-weight:700;color:var(--text-muted);">Biblioteca de videos en LSC</span>
+        </div>
+
         <div class="question-header-card" style="padding:20px 28px;margin-bottom:18px;">
           <div class="question-kicker">PREGUNTA DE LA PERSONA VISITANTE (${cat.name.toUpperCase()}):</div>
           <div style="font-size:20px;font-weight:800;color:var(--navy-dark);">«${state.selectedQuestion}»</div>
@@ -1625,7 +1676,23 @@ function renderDesktopQueueBanner() {
 // ============================================================================
 
 function renderMobileLiveStatusStrip() {
-  return '';
+  const showStripScreens = ['P03', 'P04', 'P05', 'P06', 'P08', 'P09', 'E01', 'E02', 'E03'];
+  if (!state.isLinked || !showStripScreens.includes(state.mobileScreen)) return '';
+
+  const unwatched = (state.sentVideosHistory || []).filter(v => !v.watched);
+  if (unwatched.length === 0) return '';
+
+  return `
+    <div style="background:var(--teal-light);border-bottom:2px solid var(--teal-primary);padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;">
+      <div style="font-size:12.5px;font-weight:800;color:var(--teal-dark);line-height:1.25;">
+        Video recibido (${unwatched.length})<br>
+        <span style="font-weight:600;font-size:11.5px;">${escapeHtml(unwatched[unwatched.length - 1].videoTitle)}</span>
+      </div>
+      <button class="btn-primary" style="padding:7px 12px;font-size:12px;border-radius:10px;flex-shrink:0;" onclick="openReceivedVideoById('${escapeAttr(unwatched[unwatched.length - 1].id)}')">
+        Ver video
+      </button>
+    </div>
+  `;
 }
 
 function renderMobileFloatingDock() {
@@ -1743,6 +1810,12 @@ function renderMobileScreenContent() {
           <button class="btn-primary" style="width:100%;padding:17px;" onclick="goToMobile(state.isLinked ? 'P03' : 'P02')">
             Comenzar consulta
           </button>
+
+          <div style="text-align:center;margin-top:12px;">
+            <button class="link-underline-btn" style="font-size:12.5px;" onclick="resetToNewSession()">
+              Iniciar nueva sesión
+            </button>
+          </div>
         </div>
       `;
 
@@ -1768,16 +1841,18 @@ function renderMobileScreenContent() {
             </svg>
           </div>
 
-          <h2 style="font-size:27px;font-weight:800;color:var(--navy-dark);margin-bottom:6px;">
-            PIN de la sesión
-          </h2>
-          <p style="font-size:15.5px;color:var(--text-muted);margin-bottom:22px;">
-            Muestra este código a Andrés.
-          </p>
+          <div style="background:var(--purple-light);border:2px solid var(--purple-primary);border-radius:18px;padding:14px 16px;margin-bottom:16px;width:100%;">
+            <div style="font-size:20px;font-weight:900;color:var(--purple-primary);line-height:1.25;margin-bottom:4px;">
+              Enséñale este código al funcionario
+            </div>
+            <p style="font-size:13.5px;font-weight:600;color:var(--navy-dark);line-height:1.35;margin:0;">
+              No debes escribir nada. Muéstrale o díctale estos 4 números a Andrés para que los ingrese en su computador.
+            </p>
+          </div>
 
-          <div style="display:flex;gap:10px;justify-content:center;margin-bottom:20px;">
+          <div style="display:flex;gap:10px;justify-content:center;margin-bottom:18px;">
             ${pinDigits.map(d => `
-              <div style="width:68px;height:84px;border-radius:18px;background:var(--purple-light);border:2px solid var(--purple-primary);color:var(--purple-primary);font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;">
+              <div style="width:68px;height:84px;border-radius:18px;background:var(--purple-light);border:2.5px solid var(--purple-primary);color:var(--purple-primary);font-size:36px;font-weight:900;display:flex;align-items:center;justify-content:center;">
                 ${d}
               </div>
             `).join('')}
@@ -2648,7 +2723,12 @@ function setViewMode(mode) {
 
 function goToDesktop(screenId) {
   const agentDesc = getAgentStatusDescription(screenId, state.selectedVideoId);
+  const prevScreen = (screenId === 'A05' && state.desktopScreen && !['A05', 'A06'].includes(state.desktopScreen))
+    ? state.desktopScreen
+    : state.previousDesktopScreen;
+
   saveAndSyncState({
+    previousDesktopScreen: prevScreen,
     desktopScreen: screenId,
     desktopPreviewPlaying: false,
     agentLiveActivity: agentDesc
@@ -2663,10 +2743,20 @@ function goToDesktop(screenId) {
   }
 }
 
+function goBackFromLibrary() {
+  const target = (state.previousDesktopScreen && !['A05', 'A06', 'AE01', 'AE02'].includes(state.previousDesktopScreen))
+    ? state.previousDesktopScreen
+    : 'A03';
+  goToDesktop(target);
+}
+
 function openDesktopPinScreen() {
-  const prefill = state.enteredPin && state.enteredPin.join('').length === 4
-    ? state.enteredPin
-    : String(state.sessionPin || '4829').split('');
+  let prefill = ['', '', '', ''];
+  if (state.viewMode === 'split') {
+    prefill = state.enteredPin && state.enteredPin.join('').length === 4
+      ? state.enteredPin
+      : String(state.sessionPin || '4829').split('');
+  }
   saveAndSyncState({
     desktopScreen: 'A02',
     enteredPin: prefill
@@ -2725,11 +2815,38 @@ function openE02FromChatPrompt() {
 
 // Manejo de PIN de 4 dígitos
 function handlePinDigitInput(idx, val) {
-  const clean = val.replace(/\D/g, '').slice(-1);
-  const nextPin = [...state.enteredPin];
-  nextPin[idx] = clean;
+  const digitsOnly = String(val || '').replace(/\D/g, '');
+  const nextPin = [...(state.enteredPin || ['', '', '', ''])];
+
+  if (!digitsOnly) {
+    nextPin[idx] = '';
+    state.enteredPin = nextPin;
+    return;
+  }
+
+  if (digitsOnly.length > 1) {
+    const chars = digitsOnly.slice(0, 4 - idx).split('');
+    chars.forEach((ch, offset) => {
+      nextPin[idx + offset] = ch;
+      const el = document.getElementById(`pin-input-${idx + offset}`);
+      if (el) el.value = ch;
+    });
+    state.enteredPin = nextPin;
+    const focusIdx = Math.min(3, idx + chars.length);
+    const nextEl = document.getElementById(`pin-input-${focusIdx}`);
+    if (nextEl) {
+      nextEl.focus();
+      nextEl.select();
+    }
+    return;
+  }
+
+  nextPin[idx] = digitsOnly;
   state.enteredPin = nextPin;
-  if (clean && idx < 3) {
+  const currentEl = document.getElementById(`pin-input-${idx}`);
+  if (currentEl) currentEl.value = digitsOnly;
+
+  if (idx < 3) {
     const nextEl = document.getElementById(`pin-input-${idx + 1}`);
     if (nextEl) {
       nextEl.focus();
@@ -2739,9 +2856,34 @@ function handlePinDigitInput(idx, val) {
 }
 
 function handlePinKeyDown(event, idx) {
-  if (event.key === 'Backspace' && !state.enteredPin[idx] && idx > 0) {
+  if (event.key === 'Backspace') {
+    const currentEl = document.getElementById(`pin-input-${idx}`);
+    const hasVal = Boolean(state.enteredPin[idx] || (currentEl && currentEl.value));
+    if (hasVal) {
+      event.preventDefault();
+      state.enteredPin[idx] = '';
+      if (currentEl) currentEl.value = '';
+    } else if (idx > 0) {
+      event.preventDefault();
+      state.enteredPin[idx - 1] = '';
+      const prevEl = document.getElementById(`pin-input-${idx - 1}`);
+      if (prevEl) {
+        prevEl.value = '';
+        prevEl.focus();
+      }
+    }
+  } else if (event.key === 'ArrowLeft' && idx > 0) {
     const prevEl = document.getElementById(`pin-input-${idx - 1}`);
-    if (prevEl) prevEl.focus();
+    if (prevEl) {
+      prevEl.focus();
+      prevEl.select();
+    }
+  } else if (event.key === 'ArrowRight' && idx < 3) {
+    const nextEl = document.getElementById(`pin-input-${idx + 1}`);
+    if (nextEl) {
+      nextEl.focus();
+      nextEl.select();
+    }
   } else if (event.key === 'Enter') {
     attemptPinLink();
   }
@@ -2845,12 +2987,18 @@ function simulateInvalidPin(customDigits) {
 }
 
 function retryValidPinFromError() {
-  const defaultDigits = String(state.sessionPin || '4829').split('');
   saveAndSyncState({
-    enteredPin: defaultDigits,
+    enteredPin: ['', '', '', ''],
     desktopScreen: 'A02',
     mobileScreen: state.mobileScreen === 'E04' ? 'P02' : state.mobileScreen
-  });
+  }, false);
+  setTimeout(() => {
+    const firstInput = document.getElementById('pin-input-0');
+    if (firstInput) {
+      firstInput.focus();
+      firstInput.select();
+    }
+  }, 60);
 }
 
 function regenerateMobilePin() {
@@ -3158,6 +3306,7 @@ function chooseAnotherQuestionAllCategories() {
 // Flujo de Biblioteca y Envío de Video en LSC (Computador -> Celular)
 function openCategoryInLibrary(catId) {
   saveAndSyncState({
+    previousDesktopScreen: state.desktopScreen && !['A05', 'A06'].includes(state.desktopScreen) ? state.desktopScreen : 'A03',
     libraryFilter: catId,
     desktopScreen: 'A05',
     agentLiveActivity: 'Buscando el video adecuado en la biblioteca LSC...'

@@ -1439,18 +1439,32 @@ button, input, textarea {
   }
 }
 
-/* Adaptación nativa para pantallas de celular reales */
+/* Adaptación nativa para pantallas de celular reales y vistas dedicadas */
+body.role-mobile-only .workspace-container.mode-mobile {
+  min-height: 100dvh;
+  padding: 12px;
+  align-items: center;
+}
+
+body.role-mobile-only .phone-frame {
+  max-height: calc(100dvh - 24px);
+}
+
+body.role-desktop-only .workspace-container.mode-desktop {
+  min-height: 100dvh;
+  padding: 20px;
+}
+
 @media (max-width: 520px) {
-  body.role-mobile-only .sim-topbar {
-    padding: 8px 12px;
-  }
   body.role-mobile-only .workspace-container.mode-mobile {
     padding: 0;
   }
   body.role-mobile-only .phone-frame {
     width: 100vw;
-    height: calc(100dvh - 46px);
+    height: 100dvh;
+    max-height: 100dvh;
     border-radius: 0;
+    border: none;
     box-shadow: none;
   }
 }
