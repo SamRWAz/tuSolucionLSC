@@ -810,17 +810,12 @@ function getCurrentTimeFormatted() {
 // ============================================================================
 
 function getBrandLogoSVG(size = 'normal') {
-  const heights = { small: 26, normal: 32, large: 68 };
-  const h = heights[size] || 32;
+  const heights = { small: 26, normal: 34, large: 76 };
+  const h = heights[size] || 34;
   return `
-    <span style="display:inline-flex;align-items:center;gap:${size === 'large' ? '14px' : '8px'};font-weight:800;letter-spacing:-0.03em;color:#1F1A4E;font-size:${size === 'large' ? '42px' : size === 'small' ? '19px' : '22px'};line-height:1;">
+    <span style="display:inline-flex;align-items:center;gap:${size === 'large' ? '14px' : '9px'};font-weight:800;letter-spacing:-0.03em;color:#1F1A4E;font-size:${size === 'large' ? '40px' : size === 'small' ? '19px' : '22px'};line-height:1;">
       <span><span style="color:#5130D9;">tu</span>Solución<span style="color:#5CBFBC;">LSC</span></span>
-      <svg height="${h}" viewBox="0 0 64 54" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;">
-        <path d="M18 32C18 22 25 14 34 14C42 14 48 20 48 28C48 36 41 42 32 42H22" stroke="#5CBFBC" stroke-width="4.5" stroke-linecap="round"/>
-        <path d="M12 24L20 12M28 10L33 4M42 12L49 6" stroke="#5CBFBC" stroke-width="3.5" stroke-linecap="round"/>
-        <path d="M22 38C25 30 33 25 41 27C48 29 52 36 49 43C46 49 38 51 30 49L18 46" stroke="#1F1A4E" stroke-width="4.5" stroke-linecap="round"/>
-        <circle cx="35" cy="28" r="5" fill="#5130D9"/>
-      </svg>
+      <img src="/assets/logo.png" alt="Logo tuSoluciónLSC" style="height:${h}px;width:auto;object-fit:contain;flex-shrink:0;display:block;" />
     </span>
   `;
 }
