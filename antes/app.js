@@ -162,20 +162,8 @@ function saveAndSyncState(partial = {}, broadcastLocal = true) {
   renderApp();
 }
 
-function showLiveToast(message) {
-  let toastEl = document.getElementById('live-toast-banner');
-  if (!toastEl) {
-    toastEl = document.createElement('div');
-    toastEl.id = 'live-toast-banner';
-    toastEl.className = 'live-toast';
-    document.body.appendChild(toastEl);
-  }
-  toastEl.innerHTML = `<span style="color:#5CBFBC;">●</span> <span>${escapeHtml(message)}</span>`;
-  toastEl.style.display = 'flex';
-  if (toastTimeout) clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => {
-    if (toastEl) toastEl.style.display = 'none';
-  }, 3800);
+function showLiveToast() {
+  // Sin alertas flotantes en la versión anterior
 }
 
 // ============================================================================
@@ -2318,20 +2306,10 @@ function renderApp() {
     btn.classList.toggle('active', btn.getAttribute('data-view-mode') === state.viewMode);
   });
 
-  // Actualizar estado del PIN y conexión en la barra superior
+  // Sin estado/alerta de conexión en la barra superior de la versión anterior
   const topPinBadge = document.getElementById('sim-pin-status');
   if (topPinBadge) {
-    const dotClass = state.isLinked ? 'connected' : (netStatus.cloudConnected ? 'ready' : '');
-    const statusText = state.isLinked
-      ? `Conectados en vivo · PIN ${state.sessionPin}`
-      : `PIN activo: ${state.sessionPin} ${netStatus.cloudConnected ? '(Nube lista)' : ''}`;
-
-    topPinBadge.innerHTML = `
-      <span class="p2p-status-pill">
-        <span class="p2p-dot ${dotClass}"></span>
-        <span>${statusText}</span>
-      </span>
-    `;
+    topPinBadge.innerHTML = '';
   }
 
   // Sincronizar selectores rápidos de las 26 pantallas
