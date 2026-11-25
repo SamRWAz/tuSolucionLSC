@@ -14,15 +14,18 @@ const MQTT_TOPIC_PREFIX = 'icesi/tusolucionlsc/v4/pin/';
 const CLIENT_INSTANCE_ID = 'cli-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 const processedEventIds = new Set();
 
+const WELCOME_VIDEO_SRC = '/videos/bienvenida.mp4';
+
 const CATEGORIES_DATA = {
   programas: {
     id: 'programas',
     name: 'Programas académicos',
     shortDesc: 'Carreras disponibles, facultades y duración.',
     videoTitle: 'Video LSC: Programas académicos',
+    videoSrc: '/videos/programas.mp4',
     videoDesc: 'Explicación en Lengua de Señas sobre las carreras de pregrado, facultades y duración en semestres.',
-    duration: '01:05',
-    totalSeconds: 65,
+    duration: '01:40',
+    totalSeconds: 100,
     summarySteps: [
       '1. Presentación de las facultades y carreras de pregrado disponibles.',
       '2. Duración estimada de cada programa (entre 8 y 10 semestres).',
@@ -46,9 +49,10 @@ const CATEGORIES_DATA = {
     name: 'Costos y financiación',
     shortDesc: 'Valores del semestre, becas y créditos.',
     videoTitle: 'Video LSC: Costos y financiación',
+    videoSrc: '/videos/costos.mp4',
     videoDesc: 'Información sobre valores de matrícula, opciones de becas institucionales, ICETEX y pago diferido.',
-    duration: '01:20',
-    totalSeconds: 80,
+    duration: '00:48',
+    totalSeconds: 48,
     summarySteps: [
       '1. Explicación de los valores de matrícula según el programa académico.',
       '2. Becas institucionales, apoyos económicos y convenios con ICETEX.',
@@ -72,9 +76,10 @@ const CATEGORIES_DATA = {
     name: 'Requisitos de admisión',
     shortDesc: 'Documentos requeridos, pruebas y fechas.',
     videoTitle: 'Video LSC: Requisitos de admisión',
+    videoSrc: '/videos/requisitos.mp4',
     videoDesc: 'Pasos del proceso de inscripción, documentos de identidad, resultados Saber 11 y calendario.',
-    duration: '00:48',
-    totalSeconds: 48,
+    duration: '00:32',
+    totalSeconds: 32,
     summarySteps: [
       '1. Explicación del documento de identidad requerido.',
       '2. Entrega del certificado de notas y acta de grado.',
@@ -1365,36 +1370,15 @@ function renderDesktopQueueBanner() {
         </div>
 
         <div class="a06-preview-grid">
-          <div class="a06-player-box" onclick="toggleDesktopPreviewPlay()" style="cursor:pointer;">
-            <div style="position:absolute;top:18px;left:18px;">
-              <span class="pill-tag navy" style="margin-bottom:0;">VIDEO EN LSC</span>
-            </div>
-
-            ${state.desktopPreviewPlaying ? `
-              <div class="lsc-signer-sim">
-                <div class="lsc-hands-pulse">
-                  <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
-                    <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
-                    <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
-                    <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
-                  </svg>
-                </div>
-                <div style="font-size:17px;font-weight:800;">Reproduciendo vista previa en LSC...</div>
-                <div class="lsc-caption-pill">${video.lscCaptions[0]}</div>
-                <span style="font-size:12px;opacity:0.85;">(Haz clic para pausar vista previa)</span>
-              </div>
-            ` : `
-              <div class="play-circle-btn" style="width:74px;height:74px;margin-bottom:14px;">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              </div>
-              <div style="font-size:14.5px;font-weight:700;opacity:0.95;">Haz clic para previsualizar el video</div>
-            `}
-
-            <div style="position:absolute;bottom:16px;left:18px;right:18px;background:rgba(24,20,64,0.88);padding:12px 18px;border-radius:14px;display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-size:14px;font-weight:700;">${video.videoTitle}</span>
-              <span style="font-size:13px;font-weight:700;color:#7CE3E0;">00:00 / ${video.duration}</span>
-            </div>
+          <div class="a06-player-box" style="padding:0;overflow:hidden;background:#0F0C29;">
+            <video
+              id="desktop-preview-video"
+              src="${escapeAttr(video.videoSrc)}"
+              controls
+              playsinline
+              preload="metadata"
+              style="width:100%;height:100%;object-fit:contain;display:block;"
+            ></video>
           </div>
 
           <div class="a06-summary-card">
@@ -1791,7 +1775,7 @@ function renderMobileScreenContent() {
             Elige tu pregunta y recibe la respuesta en un video en LSC.
           </p>
 
-          <div class="p01-welcome-card" onclick="openMiniClip('Bienvenida en LSC', '0:20', ' ¡Hola! Bienvenido a la atención presencial accesible en LSC de la Universidad Icesi.')">
+          <div class="p01-welcome-card" onclick="openMiniClip('Bienvenida en LSC', '0:35', '¡Hola! Bienvenido a la atención presencial accesible en LSC de la Universidad Icesi.', WELCOME_VIDEO_SRC)">
             <div class="p01-welcome-thumb">
               <div class="play-circle-btn" style="width:36px;height:36px;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -1802,7 +1786,7 @@ function renderMobileScreenContent() {
                 Bienvenida en LSC
               </div>
               <div style="font-size:13.5px;color:var(--text-muted);">
-                Video · 0:20
+                Video · 0:35
               </div>
             </div>
           </div>
@@ -2270,37 +2254,24 @@ function renderMobileScreenContent() {
             ${escapeHtml(state.selectedQuestion)}
           </div>
 
-          <div class="p07-video-card" style="height:330px;" onclick="toggleMobileVideoPlay()" style="cursor:pointer;">
-            <div class="lsc-signer-sim">
-              <div class="lsc-hands-pulse" style="${state.videoPlaying ? '' : 'animation:none;opacity:0.75;'}">
-                <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
-                  <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
-                  <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
-                  <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
-                </svg>
-              </div>
-              <div style="font-size:18px;font-weight:800;margin-top:4px;">Persona señando en LSC</div>
-              <div class="lsc-caption-pill" id="p07-live-caption">
-                ${video.lscCaptions[captionIdx]}
-              </div>
-            </div>
+          <div class="p07-video-card" style="height:auto;padding:0;overflow:hidden;background:#0F0C29;">
+            <video
+              id="p07-real-video"
+              src="${escapeAttr(video.videoSrc)}"
+              controls
+              autoplay
+              playsinline
+              preload="auto"
+              style="width:100%;aspect-ratio:16/9;display:block;background:#0F0C29;"
+            ></video>
           </div>
 
-          <div class="p07-progress-track">
-            <div class="p07-progress-fill" id="p07-progress-bar" style="width:${pct}%;"></div>
-          </div>
-          <div class="p07-time-row">
-            <span id="p07-current-time">${formatSeconds(state.videoCurrentTime)}</span>
-            <span>${formatSeconds(video.totalSeconds)}</span>
-          </div>
-
-          <div class="p07-controls-grid">
-            <button class="p07-ctrl-btn ${state.videoPlaying ? 'active' : ''}" onclick="setMobileVideoPlay(true)">
+          <div class="p07-controls-grid" style="margin-top:14px;">
+            <button class="p07-ctrl-btn active" onclick="setMobileVideoPlay(true)">
               <span>▶</span>
               <span>Reproducir</span>
             </button>
-            <button class="p07-ctrl-btn ${!state.videoPlaying ? 'active' : ''}" onclick="setMobileVideoPlay(false)">
+            <button class="p07-ctrl-btn" onclick="setMobileVideoPlay(false)">
               <span>⏸</span>
               <span>Pausar</span>
             </button>
@@ -2528,22 +2499,6 @@ function renderMobileScreenContent() {
             Gracias por visitar la Universidad Icesi.
           </p>
 
-          <div class="p01-welcome-card" style="margin-top:0;margin-bottom:16px;" onclick="openMiniClip('Despedida en LSC', '0:15', ' ¡Muchas gracias por tu visita a la Universidad Icesi! Siempre bienvenido.')">
-            <div class="p01-welcome-thumb">
-              <div class="play-circle-btn" style="width:36px;height:36px;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-              </div>
-            </div>
-            <div>
-              <div style="font-size:16px;font-weight:800;color:var(--navy-dark);margin-bottom:2px;">
-                Despedida en LSC
-              </div>
-              <div style="font-size:13.5px;color:var(--text-muted);">
-                Video · 0:15
-              </div>
-            </div>
-          </div>
-
           <button
             class="btn-outline"
             style="width:100%;padding:14px;margin-bottom:10px;font-size:14.5px;"
@@ -2690,21 +2645,35 @@ function renderMobileFlowModalIfActive() {
 
 function renderMiniClipModalIfActive() {
   if (!state.miniClipModal) return '';
+  const hasVideo = Boolean(state.miniClipModal.videoSrc);
   return `
-    <div style="position:absolute;inset:0;background:rgba(24,20,64,0.82);backdrop-filter:blur(4px);z-index:70;display:flex;align-items:center;justify-content:center;padding:20px;">
-      <div style="background:var(--white);border-radius:24px;padding:22px;width:100%;text-align:center;box-shadow:0 14px 40px rgba(0,0,0,0.3);">
-        <div style="background:var(--gradient-lsc);border-radius:18px;padding:28px 16px;color:white;margin-bottom:16px;">
-          <div class="lsc-hands-pulse" style="margin:0 auto 12px;">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2">
-              <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
-              <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
-              <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
-              <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
-            </svg>
+    <div style="position:absolute;inset:0;background:rgba(24,20,64,0.82);backdrop-filter:blur(4px);z-index:70;display:flex;align-items:center;justify-content:center;padding:16px;">
+      <div style="background:var(--white);border-radius:24px;padding:18px;width:100%;text-align:center;box-shadow:0 14px 40px rgba(0,0,0,0.3);">
+        ${hasVideo ? `
+          <div style="font-size:16px;font-weight:800;color:var(--navy-dark);margin-bottom:10px;">
+            ${escapeHtml(state.miniClipModal.title)} (${escapeHtml(state.miniClipModal.duration)})
           </div>
-          <div style="font-size:17px;font-weight:800;margin-bottom:8px;">${escapeHtml(state.miniClipModal.title)} (${escapeHtml(state.miniClipModal.duration)})</div>
-          <div class="lsc-caption-pill" style="margin:0 auto;">${escapeHtml(state.miniClipModal.caption)}</div>
-        </div>
+          <video
+            src="${escapeAttr(state.miniClipModal.videoSrc)}"
+            controls
+            autoplay
+            playsinline
+            style="width:100%;aspect-ratio:16/9;border-radius:14px;background:#0F0C29;margin-bottom:14px;display:block;"
+          ></video>
+        ` : `
+          <div style="background:var(--gradient-lsc);border-radius:18px;padding:28px 16px;color:white;margin-bottom:16px;">
+            <div class="lsc-hands-pulse" style="margin:0 auto 12px;">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2">
+                <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
+                <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+                <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+              </svg>
+            </div>
+            <div style="font-size:17px;font-weight:800;margin-bottom:8px;">${escapeHtml(state.miniClipModal.title)} (${escapeHtml(state.miniClipModal.duration)})</div>
+            <div class="lsc-caption-pill" style="margin:0 auto;">${escapeHtml(state.miniClipModal.caption)}</div>
+          </div>
+        `}
         <button class="btn-primary" style="width:100%;padding:13px;" onclick="closeMiniClip()">
           Cerrar video
         </button>
@@ -2789,8 +2758,8 @@ function goToMobile(screenId, toastForAgent = null) {
   }
 }
 
-function openMiniClip(title, duration, caption) {
-  saveAndSyncState({ miniClipModal: { title, duration, caption } }, false);
+function openMiniClip(title, duration, caption, videoSrc = null) {
+  saveAndSyncState({ miniClipModal: { title, duration, caption, videoSrc } }, false);
 }
 
 function closeMiniClip() {
@@ -3400,14 +3369,32 @@ function sendVideoToVisitorPhone() {
 
 // Controles del reproductor de video en el celular (P07)
 function toggleMobileVideoPlay() {
+  const vidEl = document.getElementById('p07-real-video');
+  if (vidEl) {
+    if (vidEl.paused) vidEl.play().catch(() => {});
+    else vidEl.pause();
+    return;
+  }
   saveAndSyncState({ videoPlaying: !state.videoPlaying }, false);
 }
 
 function setMobileVideoPlay(playing) {
+  const vidEl = document.getElementById('p07-real-video');
+  if (vidEl) {
+    if (playing) vidEl.play().catch(() => {});
+    else vidEl.pause();
+    return;
+  }
   saveAndSyncState({ videoPlaying: playing }, false);
 }
 
 function restartMobileVideo() {
+  const vidEl = document.getElementById('p07-real-video');
+  if (vidEl) {
+    vidEl.currentTime = 0;
+    vidEl.play().catch(() => {});
+    return;
+  }
   saveAndSyncState({ videoCurrentTime: 0, videoPlaying: true }, false);
 }
 
@@ -3940,8 +3927,18 @@ function downloadSimulatedVideoHtmlFallback(videoObj, questionText) {
 }
 
 function downloadSimulatedLscVideo() {
-  if (isDownloadingVideo) return;
   const videoObj = CATEGORIES_DATA[state.selectedVideoId] || CATEGORIES_DATA.requisitos;
+  if (videoObj.videoSrc) {
+    const a = document.createElement('a');
+    a.href = videoObj.videoSrc;
+    a.download = `tuSolucionLSC-${videoObj.id}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 300);
+    showLiveToast(`Descargando ${videoObj.videoTitle}...`);
+    return;
+  }
+  if (isDownloadingVideo) return;
   const questionText = state.selectedQuestion || '';
 
   const canvas = document.createElement('canvas');
