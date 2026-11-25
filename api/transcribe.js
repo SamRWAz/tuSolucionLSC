@@ -68,40 +68,78 @@ export default async function handler(req, res) {
     }
   };
 
-  const models = ['gemini-3.8-flash', 'gemini-2.5-flash'];
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        lastError = data?.error?.message || `Error HTTP ${response.status}`;
-        continue;
-      }
-
-      const candidateText = data?.candidates?.[0]?.content?.parts
-        ?.map(p => p.text || '')
-        .join('')
-        .trim();
-
-      if (candidateText) {
-        return res.status(200).json({ ok: true, text: candidateText, model });
-      }
-      lastError = 'Gemini no devolvio texto.';
-    } catch (err) {
-      lastError = err.message || 'Error de red consultando Gemini.';
+  async function tryGenerate(modelName) {
+    const cleanModel = modelName.replace(/^models\//, '');
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { ok: false, error: `${cleanModel}: ${data?.error?.message || `HTTP ${response.status}`}` };
     }
+    const candidateText = data?.candidates?.[0]?.content?.parts
+      ?.map(p => p.text || '')
+      .join('')
+      .trim();
+    if (!candidateText) {
+      return { ok: false, error: `${cleanModel}: sin texto devuelto.` };
+    }
+    return { ok: true, text: candidateText, model: cleanModel };
+  }
+
+  const initialModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
+  const errors = [];
+
+  for (const m of initialModels) {
+    try {
+      const r = await tryGenerate(m);
+      if (r.ok) return res.status(200).json(r);
+      errors.push(r.error);
+    } catch (err) {
+      errors.push(`${m}: ${err.message}`);
+    }
+  }
+
+  // Auto-descubrir modelos disponibles en esta API key
+  try {
+    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`;
+    const listRes = await fetch(listUrl);
+    const listData = await listRes.json();
+    const available = (listData?.models || [])
+      .filter(m =>
+        Array.isArray(m.supportedGenerationMethods) &&
+        m.supportedGenerationMethods.includes('generateContent') &&
+        /gemini/i.test(m.name) &&
+        !/embedding|imagen|veo|tts|aqa/i.test(m.name)
+      )
+      .map(m => m.name.replace(/^models\//, ''))
+      .filter(name => !initialModels.includes(name));
+
+    available.sort((a, b) => {
+      const af = /flash/i.test(a) ? 0 : 1;
+      const bf = /flash/i.test(b) ? 0 : 1;
+      return af - bf;
+    });
+
+    for (const m of available.slice(0, 6)) {
+      try {
+        const r = await tryGenerate(m);
+        if (r.ok) return res.status(200).json(r);
+        errors.push(r.error);
+      } catch (err) {
+        errors.push(`${m}: ${err.message}`);
+      }
+    }
+  } catch (err) {
+    errors.push(`listModels: ${err.message}`);
   }
 
   return res.status(502).json({
     error: 'GEMINI_FAILED',
-    message: lastError || 'No se pudo procesar con Gemini.'
+    message: errors[0] || 'No se pudo procesar con Gemini.',
+    details: errors
   });
 }
