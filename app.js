@@ -1068,17 +1068,6 @@ function renderDesktopScreenContent() {
             </button>
           </div>
 
-          ${state.viewMode === 'split' ? `
-            <div style="margin-top:14px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
-              <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('4829')">
-                Usar PIN por defecto (4829)
-              </button>
-              <button class="link-underline-btn" style="font-size:12.5px;color:#C4254A;" onclick="simulateInvalidPin()">
-                Simular PIN incorrecto (4805 → AE01)
-              </button>
-            </div>
-          ` : ''}
-
           <div class="info-footnote">
             <div class="info-footnote-icon">i</div>
             <span>El código PIN garantiza que el video en LSC se envíe únicamente al celular de la persona que estás atendiendo.</span>
@@ -1401,14 +1390,9 @@ function renderDesktopQueueBanner() {
           <button class="btn-outline" onclick="goToDesktop('A05')">
             Volver a la biblioteca
           </button>
-          <div style="display:flex;gap:12px;align-items:center;">
-            <button class="link-underline-btn" style="color:#C4254A;font-size:13px;" onclick="goToDesktop('AE02')">
-              Simular fallo (AE02)
-            </button>
-            <button class="btn-primary" onclick="sendVideoToVisitorPhone()">
-              Enviar video al celular
-            </button>
-          </div>
+          <button class="btn-primary" onclick="sendVideoToVisitorPhone()">
+            Enviar video al celular
+          </button>
         </div>
       `;
 
@@ -1598,40 +1582,6 @@ function renderDesktopQueueBanner() {
           `).join('')}
         </div>
 
-        <div class="gemini-tools-row">
-          <button
-            type="button"
-            class="gemini-action-btn ${isRecordingGeminiVoice ? 'recording' : ''}"
-            onclick="toggleGeminiVoiceRecording()"
-            ${isTranscribingGemini ? 'disabled' : ''}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="23"/>
-              <line x1="8" y1="23" x2="16" y2="23"/>
-            </svg>
-            <span>
-              ${isRecordingGeminiVoice
-                ? 'Detener y transcribir con Gemini'
-                : (isTranscribingGemini ? 'Transcribiendo con Gemini...' : 'Dictar por voz (Gemini)')}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            class="gemini-action-btn"
-            onclick="rewriteDraftWithGemini()"
-            ${isTranscribingGemini || isRecordingGeminiVoice ? 'disabled' : ''}
-            title="Convierte notas cortas en una respuesta clara para Patricia"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/>
-            </svg>
-            <span>Redactar con Gemini</span>
-          </button>
-        </div>
-
         <form class="a10-input-row" onsubmit="handleDesktopChatSubmit(event)">
           <input
             type="text"
@@ -1641,6 +1591,22 @@ function renderDesktopQueueBanner() {
             value="${escapeAttr(state.desktopDraftMsg)}"
             oninput="state.desktopDraftMsg = this.value"
           />
+          <button
+            type="button"
+            class="gemini-action-btn ${isRecordingGeminiVoice ? 'recording' : ''}"
+            style="padding:14px 16px;border-radius:14px;flex-shrink:0;"
+            onclick="toggleGeminiVoiceRecording()"
+            ${isTranscribingGemini ? 'disabled' : ''}
+            title="${isRecordingGeminiVoice ? 'Detener grabación y transcribir' : 'Grabar audio para transcribir al chat'}"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            <span>${isRecordingGeminiVoice ? 'Detener' : (isTranscribingGemini ? 'Transcribiendo...' : 'Audio')}</span>
+          </button>
           <button type="submit" class="btn-primary">Enviar mensaje</button>
         </form>
       `;
