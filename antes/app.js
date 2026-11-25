@@ -692,15 +692,6 @@ function renderDesktopScreenContent() {
             </button>
           </div>
 
-          <div style="margin-top:14px;display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
-            <button class="link-underline-btn" style="font-size:12.5px;" onclick="fillPinAndLink('4829')">
-              Usar PIN por defecto (4829)
-            </button>
-            <button class="link-underline-btn" style="font-size:12.5px;color:#C4254A;" onclick="simulateInvalidPin()">
-              Simular PIN incorrecto (4805 → AE01)
-            </button>
-          </div>
-
           <div class="info-footnote">
             <div class="info-footnote-icon">i</div>
             <span>El código PIN garantiza que el video en LSC se envíe únicamente al celular de la persona que estás atendiendo.</span>
@@ -971,14 +962,9 @@ function renderDesktopScreenContent() {
           <button class="btn-outline" onclick="goToDesktop('A05')">
             Volver a la biblioteca
           </button>
-          <div style="display:flex;gap:12px;align-items:center;">
-            <button class="link-underline-btn" style="color:#C4254A;font-size:13px;" onclick="goToDesktop('AE02')">
-              Simular fallo (AE02)
-            </button>
-            <button class="btn-primary" onclick="sendVideoToVisitorPhone()">
-              Enviar video al celular
-            </button>
-          </div>
+          <button class="btn-primary" onclick="sendVideoToVisitorPhone()">
+            Enviar video al celular
+          </button>
         </div>
       `;
 
@@ -1626,13 +1612,6 @@ function renderMobileScreenContent() {
             <div style="font-size:17px;font-weight:800;color:var(--navy-dark);line-height:1.35;">
               ${escapeHtml(state.selectedQuestion)}
             </div>
-          </div>
-
-          <div style="width:100%;background:#F5F4FA;border:1.5px solid var(--border-light);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px;text-align:left;margin-top:auto;">
-            <span style="color:var(--purple-primary);font-weight:800;">⚠️</span>
-            <span style="font-size:13px;color:var(--text-muted);line-height:1.4;">
-              No puedes hacer otra pregunta hasta recibir esta respuesta.
-            </span>
           </div>
         </div>
       `;
