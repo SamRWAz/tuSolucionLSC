@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tuSoluciónLSC — QR Acceso Visitante</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--bg-page);
+    }
+    .qr-card {
+      width: 100%;
+      max-width: 480px;
+      background: var(--white);
+      border: 1.5px solid var(--border-light);
+      border-radius: 28px;
+      padding: 34px 28px;
+      box-shadow: var(--shadow-md);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .qr-box {
+      padding: 18px;
+      background: var(--white);
+      border: 2.5px solid var(--teal-primary);
+      border-radius: 22px;
+      box-shadow: var(--shadow-sm);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .qr-url-pill {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--teal-dark);
+      background: var(--teal-light);
+      padding: 9px 16px;
+      border-radius: 999px;
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .qr-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main class="qr-card">
+    <div style="display:inline-flex;align-items:center;gap:10px;font-weight:800;font-size:24px;color:#1F1A4E;letter-spacing:-0.03em;">
+      <span><span style="color:#5130D9;">tu</span>Solución<span style="color:#5CBFBC;">LSC</span></span>
+      <img src="/assets/logo.png" alt="Logo tuSoluciónLSC" style="height:36px;width:auto;object-fit:contain;" />
+    </div>
+
+    <span class="pill-tag teal" style="margin-bottom:0;">APP VISITANTE · CELULAR</span>
+
+    <h1 style="font-size:26px;font-weight:800;color:var(--navy-dark);line-height:1.2;margin:0;">
+      QR para la Visitante (Patricia)
+    </h1>
+    <p style="font-size:14.5px;color:var(--text-muted);line-height:1.45;margin:0;">
+      Escanea este código QR con tu celular para iniciar tu atención en Lengua de Señas Colombiana (LSC).
+    </p>
+
+    <div class="qr-box" id="qr-container" aria-label="Código QR Visitante"></div>
+
+    <a class="qr-url-pill" id="qr-target-link" href="/visitante" target="_blank"></a>
+
+    <div class="qr-actions">
+      <button class="btn-primary" onclick="downloadQrPng()">Descargar QR</button>
+      <a class="btn-outline" href="/visitante" style="text-decoration:none;">Abrir app móvil</a>
+    </div>
+
+    <a href="/qr-funcionario" class="link-underline-btn" style="font-size:13.5px;text-decoration:none;">
+      Ver QR de Funcionario (Andrés) →
+    </a>
+  </main>
+
+  <script>
+    const targetUrl = window.location.origin + '/visitante';
+    const linkEl = document.getElementById('qr-target-link');
+    linkEl.href = targetUrl;
+    linkEl.textContent = targetUrl;
+
+    new QRCode(document.getElementById('qr-container'), {
+      text: targetUrl,
+      width: 230,
+      height: 230,
+      colorDark: '#1F1A4E',
+      colorLight: '#FFFFFF',
+      correctLevel: QRCode.CorrectLevel.H
+    });
+
+    function downloadQrPng() {
+      const canvas = document.querySelector('#qr-container canvas');
+      const img = document.querySelector('#qr-container img');
+      const dataUrl = canvas ? canvas.toDataURL('image/png') : (img ? img.src : '');
+      if (!dataUrl) return;
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = 'QR-tuSolucionLSC-Visitante.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  </script>
+</body>
+</html>
