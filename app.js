@@ -2395,11 +2395,13 @@ function renderMobileScreenContent() {
           </div>
 
           <div class="p09-chat-container" id="mobile-chat-scroll" style="height:285px;">
-            ${state.chatMessages.length === 0 ? `
-              <div style="margin:auto;text-align:center;color:var(--text-muted);font-size:13.5px;padding:12px;">
-                Escribe tu pregunta aquí abajo y Andrés la recibirá al instante en su computador.
+            <div class="p09-msg agent">
+              <div class="p09-bubble">
+                ¡Hola! Soy Andrés. Escribe tu pregunta aquí abajo y con gusto te ayudaré por este chat.
               </div>
-            ` : state.chatMessages.map(m => `
+              <div class="p09-sender">Andrés · Bienvenida</div>
+            </div>
+            ${state.chatMessages.map(m => `
               <div class="p09-msg ${m.sender === 'visitor' ? 'visitor' : 'agent'}">
                 <div class="p09-bubble">${escapeHtml(m.text)}</div>
                 <div class="p09-sender">${m.sender === 'visitor' ? 'Patricia' : 'Andrés'}</div>
